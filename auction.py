@@ -26,7 +26,6 @@ def process_auction(dealer: Direction, auction: str) -> Dict[str, str|int]:
     # Initialize tracking variables
     current_dir = dealer
     opener: Optional[Direction] = None
-    responder: Optional[Direction] = None
     intervener: Optional[Direction] = None
     advancer: Optional[Direction] = None
     opening_bid: str = ""
@@ -105,12 +104,11 @@ def process_auction(dealer: Direction, auction: str) -> Dict[str, str|int]:
                     strain = bid[1]
                     if strain not in first_bidder_of_strain[side]:
                         first_bidder_of_strain[side][strain] = current_dir
-                    # Identify opener and responder
+                    # Identify opener
                     if opener is None:
                         opener = current_dir
                         open_side = side
                         opening_bid = bid
-                        responder = current_dir.partner()
                         open_seat = len(bids)
                     
                 # Identify intervener and advancer
@@ -156,7 +154,7 @@ def process_auction(dealer: Direction, auction: str) -> Dict[str, str|int]:
         "AuctionCheck": auctionType,
         "Opener": opener.abbreviation() if opener is not None else "",
         "OpenSide": open_side,
-        "Responder": responder.abbreviation() if responder is not None else "",
+        "Responder": opener.partner().abbreviation() if opener is not None else "",
         "Intervener": intervener.abbreviation() if intervener is not None else "",
         "Advancer": advancer.abbreviation() if advancer is not None else "",
         "Opening": opening_bid,

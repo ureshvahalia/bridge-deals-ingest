@@ -6,30 +6,9 @@ from common_objects import Direction, BoardRecord, PairSide
 from common_objects import lineProf, dealNo2dealer, dealNo2vul
 from common_objects import rank_order, sort_holding, str_to_side
 from auction import process_auction
-from scoring import *
+from scoring import convert_to_imps, compute_contract_details_and_NSscore, compute_TricksMade, process_pars
 from dds_wrapper import create_dd_columns
 from fuzzy import fuzzy_deduplicate_events
-
-# For each player-hand, we can compute the following basic metadata:
-#     HCP: int
-#     Controls: int
-#     Dist: int[4]
-#     Shape: int[4]
-#     SuitPts: int[4]
-    
-# For each board played, we can compute the following basic metadata:
-#     Opener: Direction
-#     Responder: Direction
-#     Overcaller: Direction
-#     Advancer: Direction
-#     Competitive: bool
-#     ContractType: enum(PartScore|Game|Slam|Grand)
-#     ContractStrain: enum(S|H|D|C|N)
-#     ContractLevel: int
-#     ContractPremium: enum(None|Dbl|Rdbl)
-#     Leader: Direction
-#     Lead: Card 
-#     PlayerNames: str[4]
 
 NCARDS_IN_HAND: Final[int] = 13
 NSUITS: Final[int] = 4
@@ -62,7 +41,7 @@ def parse_hand_string(hand_str: str) -> Optional[Dict[str, str]]:
     hands: List[str] = hand_str[2:].split()
     num_hands: int = len(hands)
     if num_hands < 3 or num_hands > 4:
-        print(f"Found {num_hands} hands in {hand_str}")
+        logging.warning(f"Found {num_hands} hands in {hand_str}")
         return None
     
     result = {}
@@ -93,7 +72,7 @@ def parse_hand_string(hand_str: str) -> Optional[Dict[str, str]]:
             missing_cards.append(sort_holding(''.join(missing_ranks)))
         missing_hand: str = ".".join(missing_cards)
         if len(missing_hand) != pbn_one_hand_strlen:
-            print(f"Failed to construct missing hand for {hand_str}")
+            logging.error(f"Failed to construct missing hand for {hand_str}")
             return None
         result[f"{position.abbreviation()}_Hand"] = missing_hand
     
@@ -167,64 +146,40 @@ def analyze_hand(hand_str: str) -> dict:
         'Shape': '.'.join(str(x) for x in shape)
     }
 
-def _is_valid(col_name: str):
+def _is_valid(col_name: str) -> pl.Expr:
     return pl.col(col_name).is_not_null() & pl.col(col_name).ne("")
+
 def _is_invalid(col_name: str) -> pl.Expr:
+    """Check if a column is null or empty."""
     return pl.col(col_name).is_null() | (pl.col(col_name) == "")
 
-def expand_matches(dealsDf: pl.DataFrame, boardSummaryDf: pl.DataFrame) -> pl.DataFrame:
-    # Get all unique DealUIDs that have at least 2 matches
-    valid_deals = (boardSummaryDf.group_by("DealUID")
-                   .count()
-                   .filter(pl.col("count") >= TABLES_IN_TEAM_GAME)
-                   .select("DealUID"))
-    
-    # Filter dealsDf to only include valid deals - ensure DealUID column exists
-    for df_name, df in [("deals_df", dealsDf), ("board_summary_df", boardSummaryDf)]:
-        if "DealUID" not in df.columns:
-            raise ValueError(f"{df_name} missing DealUID column")
-    filtered_deals = dealsDf.join(valid_deals, on="DealUID", how="inner")
-    
-    # Get first two matches for each deal - ensure DealUID column exists in boardSummaryDf
-    matches = (boardSummaryDf.join(filtered_deals.select("DealUID"), on="DealUID", how="inner")
-               .sort(["DealUID", "TableID"])
-               .with_columns(pl.col("DealUID").cum_count().over("DealUID").alias("match_num"))
-               .filter(pl.col("match_num") <= TABLES_IN_TEAM_GAME))
-    
-    # Pivot the matches to wide format - EXCLUDE DealUID and match_num from renaming
-    exclude_cols: List[str] = ["DealUID", "match_num"]
-    rename_cols_1 = {col: f"{col}_1" for col in matches.columns if col not in exclude_cols}
-    rename_cols_2 = {col: f"{col}_2" for col in matches.columns if col not in exclude_cols}
-    match1 = matches.filter(pl.col("match_num") == 1).drop("match_num").rename(rename_cols_1)
-    match2 = matches.filter(pl.col("match_num") == 2).drop("match_num").rename(rename_cols_2)
-    
-    # Combine all data with proper join keys
-    result = (filtered_deals
-              .join(match1, on="DealUID", how="left")
-              .join(match2, on="DealUID", how="left"))
-    
+def compare_deal_at_both_tables(expandedDf: pl.DataFrame) -> pl.DataFrame:
     # Calculate derived columns - with null checks
-    result1 = result.with_columns(
+    result1 = expandedDf.with_columns(
         pl.struct(["RawScoreNS_1", "RawScoreNS_2"])
             .map_elements(lambda x: convert_to_imps(x["RawScoreNS_1"], x["RawScoreNS_2"])
                         if (x["RawScoreNS_1"] is not None and x["RawScoreNS_2"] is not None)
                         else 0,
                         return_dtype=pl.Int32)
-            .alias("Team1NS_IMPs"))
+            .alias("Team1NS_IMPs")
+    )
     result1 = result1.with_columns(
         pl.col("Team1NS_IMPs").abs().alias("SWING"),
-        (pl.col("Opener_2") == pl.col("Opener_1")).alias("SameOpener"))
+        (pl.col("Opener_2") == pl.col("Opener_1")).alias("SameOpener")
+    )
     result1 = result1.with_columns(
         (pl.col("SameOpener") & (pl.col("Opening_1") == pl.col("Opening_2"))).alias("SameOpening"),
         (pl.col("Auction_2") == pl.col("Auction_1")).alias("SameAuction"),
         (pl.col("Contract_2") == pl.col("Contract_1")).alias("SameBid"),
         ((pl.col("Contract_2") == pl.col("Contract_1")) & 
         (pl.col("Declarer_2") == pl.col("Declarer_1"))).alias("SameContract"),
-        (pl.col("DeclSide_2") == pl.col("DeclSide_1")).alias("SameDeclSide"))
+        (pl.col("DeclSide_2") == pl.col("DeclSide_1")).alias("SameDeclSide")
+    )
     result1 = result1.with_columns(        
         (pl.col("SameBid") & pl.col("SameDeclSide") & ~pl.col("SameContract")).alias("RightSide"),
         (pl.col("SameContract") & (pl.col("TricksMade_2") == pl.col("TricksMade_1"))).alias("SameResult"),
-        (pl.col("Lead_1") == pl.col("Lead_2")).alias("SameLead"))
+        (pl.col("Lead_1") == pl.col("Lead_2")).alias("SameLead")
+    )
     result1 = result1.with_columns(
         (pl.when(
                 (pl.col("SameContract")) & 
@@ -238,30 +193,74 @@ def expand_matches(dealsDf: pl.DataFrame, boardSummaryDf: pl.DataFrame) -> pl.Da
             .otherwise(0)
         ).otherwise(0)
         * pl.col("Team1NS_IMPs")
-        ).alias("ShorterAuctionScore"))
-    result1 = result1.with_columns(
+        ).alias("ShorterAuctionScore")
+    )
+    result = result1.with_columns(
         (pl.when(pl.col("OpenSeat_1") < pl.col("OpenSeat_2"))
         .then(pl.col("Opening_1"))
         .otherwise(
             pl.when(pl.col("OpenSeat_1") > pl.col("OpenSeat_2"))
             .then(pl.col("Opening_2"))
             .otherwise(pl.lit(""))
-        )).alias("EarlyBid"))
-    result = result1.with_columns(
-        (pl.when(pl.col("EarlyBid") == "")
-        .then(0)
-        .otherwise(
-            pl.col("Team1NS_IMPs") * 
-            pl.when(pl.col("Opening_1") == pl.col("EarlyBid"))
-            .then(pl.when(pl.col("OpenSide_1") == "NS").then(1).otherwise(-1))
-            .when(pl.col("Opening_2") == pl.col("EarlyBid"))
-            .then(pl.when(pl.col("OpenSide_2") == "EW").then(1).otherwise(-1))
-            .otherwise(0)
-        )
-        ).alias("EBScore"))
+        )).alias("EarlyBid")
+    )
+    # Add OpenerIMPs calculations at the end, before the return statement
+    result = result.with_columns([
+        # OpenerIMPs_1: 
+        # - If OpenSide_1 is "NS", use Team1NS_IMPs
+        # - If OpenSide_1 is "EW", use -Team1NS_IMPs
+        # - If blank, use 0
+        pl.when(pl.col("OpenSide_1") == "NS")
+        .then(pl.col("Team1NS_IMPs"))
+        .when(pl.col("OpenSide_1") == "EW")
+        .then(-pl.col("Team1NS_IMPs"))
+        .otherwise(0)
+        .alias("OpenerIMPs_1"),
+        
+        # OpenerIMPs_2:
+        # - If OpenSide_2 is "EW", use Team1NS_IMPs
+        # - If OpenSide_2 is "NS", use -Team1NS_IMPs
+        # - If blank, use 0
+        pl.when(pl.col("OpenSide_2") == "EW")
+        .then(pl.col("Team1NS_IMPs"))
+        .when(pl.col("OpenSide_2") == "NS")
+        .then(-pl.col("Team1NS_IMPs"))
+        .otherwise(0)
+        .alias("OpenerIMPs_2")
+    ])
+    
+    return result.with_columns(
+        pl.when(pl.col("Opening_1") == pl.col("EarlyBid"))
+        .then(pl.col("OpenerIMPs_1"))
+        .when(pl.col("Opening_2") == pl.col("EarlyBid"))
+        .then(pl.col("OpenerIMPs_2"))
+        .otherwise(0)
+        .alias("EBScore")
+    )
 
-    return result
-
+def expand_matches(dealsDf: pl.DataFrame, boardsDf: pl.DataFrame) -> pl.DataFrame:
+    # Remove common columns to avoid duplication
+    common_columns = set(dealsDf.columns).intersection(boardsDf.columns) - {"DealUID"}
+    boardsDf = boardsDf.drop(list(common_columns))
+    
+    # Create row numbers within each DealUID group (will be 1 and 2)
+    matches = boardsDf.with_columns(pl.col("DealUID").cum_count().over("DealUID").alias("match_num"))
+    
+    # Split into two dataframes and rename columns
+    exclude_cols: List[str] = ["DealUID", "match_num"]
+    rename_cols_1 = {col: f"{col}_1" for col in matches.columns if col not in exclude_cols}
+    rename_cols_2 = {col: f"{col}_2" for col in matches.columns if col not in exclude_cols}
+    
+    match1 = matches.filter(pl.col("match_num") == 1).drop("match_num").rename(rename_cols_1)
+    match2 = matches.filter(pl.col("match_num") == 2).drop("match_num").rename(rename_cols_2)
+    
+    # Join deals with both matches
+    result = (dealsDf
+              .join(match1, on="DealUID", how="inner")
+              .join(match2, on="DealUID", how="inner"))
+    
+    return compare_deal_at_both_tables(result)
+    
 def process_auction_vectorized(dealer_col: pl.Series, auction_col: pl.Series) -> pl.DataFrame:
     """Vectorized function to process multiple auctions at once."""
     
@@ -282,6 +281,40 @@ def _create_player_column_mapping(position_col: str, column_suffix: str) -> pl.E
         when_expr = when_expr.when(pl.col(position_col) == pos).then(pl.col(f"{pos}_{column_suffix}"))
     return when_expr
 
+def _reorder_columns(boardsdf: pl.DataFrame) -> pl.DataFrame:
+    # Move all validation columns to the end
+    derived_cols = [col for col in boardsdf.columns if "Derived" in col]
+    validation_cols = [col for col in boardsdf.columns if "Validation" in col]
+    other_cols = [col for col in boardsdf.columns if "Derived" not in col and "Validation" not in col]
+    boardsdf = boardsdf.select(other_cols + derived_cols + validation_cols)
+    return boardsdf
+
+def validate_and_combine_columns(df: pl.DataFrame, primary: str, secondary: str, validation_col: str) -> pl.DataFrame:
+    if df[primary].dtype == pl.Utf8:
+        primary_invalid = _is_invalid(primary)
+        secondary_invalid = _is_invalid(secondary)
+    else:
+        primary_invalid = pl.col(primary).is_null()
+        secondary_invalid = pl.col(secondary).is_null()
+
+    df = df.with_columns([
+        pl.when(primary_invalid)
+            .then(pl.when(secondary_invalid).then(pl.lit("Missing")).otherwise(pl.lit("Derived")))
+            .otherwise(pl.when(secondary_invalid)
+                    .then(pl.lit("Primary"))
+                    .otherwise(pl.when(pl.col(primary) == pl.col(secondary))
+                                .then(pl.lit("Match"))
+                                .otherwise(pl.lit("Mismatch"))))
+        .alias(validation_col)
+    ])
+    
+    return df.with_columns([
+        pl.when(primary_invalid)
+            .then(pl.col(secondary))
+            .otherwise(pl.col(primary))
+        .alias(primary)
+    ])
+    
 def process_boards(boardsdf: pl.DataFrame, dealsdf: pl.DataFrame) -> pl.DataFrame:
     """Process all boards more efficiently using Polars operations."""
     
@@ -329,27 +362,26 @@ def add_uids(df: pl.DataFrame) -> pl.DataFrame:
     Using group_by() for UID creation - offers better performance for large datasets
     """
     
-    unique_list, xlations, scores = fuzzy_deduplicate_events(df["EventName"].to_list())
-    df_to_csv(pl.DataFrame(list(xlations.items()), schema=["original", "canonical"], orient="row"), "unique_events")
-    df_to_csv(pl.DataFrame(scores, schema=["name1", "name2", "similarity"], orient="row"), "similarity_scores")
-    df_with_uids = df.with_columns([
-        # EventUID: dense_rank over EventName
-        pl.col('EventName').rank('dense').alias('EventUID'),
+    xlations: Dict[str, str] = fuzzy_deduplicate_events(df["EventName"].to_list())
+    df_with_uids = df.with_columns([pl.col("EventName").replace_strict(xlations).alias("CleanedEventName")
+        ]).with_columns([
+            # EventUID: dense_rank over EventName
+            pl.col('CleanedEventName').rank('dense').alias('EventUID'),
+            
+            # MatchID: rank within each event
+            pl.col('MatchName').rank('dense').over('CleanedEventName').alias('MatchID')
+        ]).with_columns([
+            # HandUID: rank over hand-specific fields (independent of other UIDs)
+            pl.struct(['Hands', 'Dealer', 'Vulnerability']).rank('dense').alias('HandUID'),
         
-        # MatchID: rank within each event
-        pl.col('MatchName').rank('dense').over('EventName').alias('MatchID')
-    ]).with_columns([
-        # HandUID: rank over hand-specific fields (independent of other UIDs)
-        pl.struct(['Hands', 'Dealer', 'Vulnerability']).rank('dense').alias('HandUID'),
-    
-        # DealUID: rank over combination of EventUID, MatchID, Hands
-        # Using EventUID/MatchID instead of EventName/MatchName for efficiency
-        pl.struct(['EventUID', 'MatchID', 'Hands']).rank('dense').alias('DealUID')
-    ]).with_columns([
-        # BoardUID: rank over all 8 fields that define a unique board
-        # Leverages DealUID computation by adding the remaining 5 fields
-        pl.struct(['DealUID', 'DealNum', 'TableID', 'North', 'East', 'South', 'West']).rank('dense').alias('BoardUID')
-    ])
+            # DealUID: rank over combination of EventUID, MatchID, Hands
+            # Using EventUID/MatchID instead of EventName/MatchName for efficiency
+            pl.struct(['EventUID', 'MatchID', 'Hands']).rank('dense').alias('DealUID')
+        ]).with_columns([
+            # BoardUID: rank over all 8 fields that define a unique board
+            # Leverages DealUID computation by adding the remaining 5 fields
+            pl.struct(['DealUID', 'DealNum', 'TableID', 'North', 'East', 'South', 'West']).rank('dense').alias('BoardUID')
+        ])
     
     # Reorder columns
     uid_cols = ['BoardUID', 'DealUID', 'EventUID', 'MatchID', 'HandUID']
@@ -428,28 +460,20 @@ def process_hands(hands: str) -> Dict[str, str]:
             hands_dict[f'{direction[0:1]}_{key}'] = value
     return hands_dict
 
-def extract_derived_features(allDf: pl.DataFrame, generateDD: bool = False) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+def extract_derived_features(rawdf: pl.DataFrame, generateDD: bool = False) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Write the collected data to CSV files using Polars for better performance."""
     # Create DataFrames for each entity type
     events_df = (
-        allDf.select(["EventUID", "MatchID", "EventName", "MatchName", "EventLocation", "MatchDate", "ScoringForm", "Tables", "FilePath"])
+        rawdf.select(["EventUID", "MatchID", "EventName", "MatchName", "EventLocation", "MatchDate", "ScoringForm", "Tables", "FilePath"])
         .unique(subset=["EventUID", "MatchID"], keep="first")
     )
     
-    allDf = allDf.with_columns(pl.col("FilePath").map_elements(lambda x: Path(x).suffix[1:].upper(), return_dtype=pl.Utf8).alias("SourceType"))
+    allDf = rawdf.with_columns(pl.col("FilePath").map_elements(lambda x: Path(x).suffix[1:].upper(), return_dtype=pl.Utf8).alias("SourceType"))
     
     deals_df = (
-        allDf.select(["DealUID", "HandUID", "EventUID", "MatchID", "SourceType", "DealNum", "Dealer", "Vulnerability", "Hands", "DDS"])
+        allDf.select(["DealUID", "HandUID", "EventUID", "MatchID", "SourceType", "DealNum", "Dealer", "Vulnerability", "Hands", "DDS", "DealerValidation", "VulValidation"])
         .unique(subset=["DealUID"], keep="first")
     )
-    deals_df = deals_df.with_columns([
-        # Compute expected dealer and vulnerability for all rows
-        pl.col("DealNum").map_elements(dealNo2dealer, return_dtype=pl.Utf8).alias("dealer2"),
-        pl.col("DealNum").map_elements(dealNo2vul, return_dtype=pl.Utf8).alias("vul2"),
-    ])
-    deals_df = validate_and_combine_columns(deals_df, "Dealer", "dealer2", "DealerValidation")
-    deals_df = validate_and_combine_columns(deals_df, "Vulnerability", "vul2", "VulValidation")
-    deals_df = deals_df.drop(["dealer2", "vul2"])
     
     boards_df = (
         allDf.select(["BoardUID", "DealUID", "TableID", "SourceType", "North", "East", "South", "West", "Declarer", 
@@ -488,61 +512,91 @@ def extract_derived_features(allDf: pl.DataFrame, generateDD: bool = False) -> T
 
     return allDf, events_df, deals_df, boards_df, hands_df
 
-def validate_and_combine_columns(df: pl.DataFrame, primary: str, secondary: str, validation_col: str) -> pl.DataFrame:
-    if df[primary].dtype == pl.Utf8:
-        primary_invalid = _is_invalid(primary)
-        secondary_invalid = _is_invalid(secondary)
-    else:
-        primary_invalid = pl.col(primary).is_null()
-        secondary_invalid = pl.col(secondary).is_null()
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle, Patch
 
-    df = df.with_columns([
-        pl.when(primary_invalid)
-            .then(pl.when(secondary_invalid).then(pl.lit("Missing")).otherwise(pl.lit("Derived")))
-            .otherwise(pl.when(secondary_invalid)
-                    .then(pl.lit("Primary"))
-                    .otherwise(pl.when(pl.col(primary) == pl.col(secondary))
-                                .then(pl.lit("Match"))
-                                .otherwise(pl.lit("Mismatch"))))
-        .alias(validation_col)
-    ])
-    
-    return df.with_columns([
-        pl.when(primary_invalid)
-            .then(pl.col(secondary))
-            .otherwise(pl.col(primary))
-        .alias(primary)
-    ])
-    
-def generate_summaries(expandedDf: pl.DataFrame, auctionsDf: pl.DataFrame) -> None:
+def generate_2d_waterfall(data: List[List[Any]], x_label: str, y_label: str, fname: str) -> None:
+    # Dict must have three elements -- a string that is the label for each rectangle, and the x and y dimensions
+    df = pl.DataFrame(data, schema=["Label", x_label, y_label], orient="row")
+    fpath: str = f"{output_dir}/{fname}.png" if output_dir else f"{fname}.png"
+
+    # Plot
+    _, ax = plt.subplots(figsize=(8,6))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]  # get default color cycle
+
+    prev_x, prev_y = 0.0, 0.0
+    x_max: float = 0.0
+    y_max: float = 0.0
+    i = 0
+    for row in df.iter_rows(named=True):
+        # Cast to float to keep matplotlib happy
+        curr_x = float(row[x_label])
+        curr_y = float(row[y_label])
+        x_max = max(curr_x, x_max)
+        y_max = max(curr_y, y_max)
+        color = colors[i % len(colors)]  # cycle through colors
+        i = i + 1
+
+        rect = Rectangle(
+            (0.0, 0.0),
+            curr_x,
+            curr_y,
+            alpha=0.6,
+            fc=color,
+            ec="black",
+            label=row["Label"]
+        )
+        ax.add_patch(rect)
+
+        prev_x, prev_y = curr_x, curr_y
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.set_title(f"{y_label} vs {x_label} by Factor (Stepwise Stacked View)")
+    # Axis limits (ensure floats)
+    ax.set_xlim(0, x_max * 1.1)
+    ax.set_ylim(0, y_max * 1.1)
+    legend_patches = [
+        Patch(facecolor=colors[i % len(colors)], edgecolor="black", label=row["Label"])
+        for i, row in enumerate(df.iter_rows(named=True))
+    ]
+    ax.legend(handles=legend_patches)
+
+    # Save chart to file
+    plt.savefig(fpath, dpi=300, bbox_inches="tight")
+    plt.close()
+
+def generate_summaries(auctionsDf: pl.DataFrame) -> None:
     def _summaryRow(desc: str, df: pl.DataFrame, totHands: int) -> tuple[str, int, float, int, float]:
         return (desc, df.height, df.height / totHands, int(df["SWING"].sum()), df["SWING"].sum()/df.height if df.height > 0 else 0.0)
+    def _chartRow(desc: str, df: pl.DataFrame, totHands: int) -> tuple[str, float, float]:
+        return (desc, df.height / totHands, df["SWING"].sum()/df.height if df.height > 0 else 0.0)
     
-    allHands: int = expandedDf.height
     handsWithAuctions: int = auctionsDf.height
 
     summaryData: List[List[Any]] = [
-        list(_summaryRow("All Hands", expandedDf, allHands)),
-        list(_summaryRow("Same Contract/Declarer", expandedDf.filter(pl.col("SameContract")), allHands)),
-        list(_summaryRow("Same Contract/Side, Diff Declarer", expandedDf.filter(pl.col("RightSide")), allHands)),
-        list(_summaryRow("Same Contract, Diff Sides", expandedDf.filter(pl.col("SameBid") & ~pl.col("SameDeclSide")), allHands)),
-        list(_summaryRow("Different contracts, same side", expandedDf.filter(pl.col("SameDeclSide") & ~pl.col("SameBid")), allHands)),
-        list(_summaryRow("Different contracts, different sides", expandedDf.filter(~pl.col("SameDeclSide") & ~pl.col("SameBid")), allHands)),
-        list(_summaryRow("Same contract, declarer, and lead", expandedDf.filter(pl.col("SameContract") & pl.col("SameLead")), allHands)),
-        list(_summaryRow("Same contract and declarer, different lead", expandedDf.filter(pl.col("SameContract") & ~pl.col("SameLead")), allHands)),
-        list(_summaryRow("Hands with recorded auctions", auctionsDf, allHands)),
-        list(_summaryRow("Same Auction/Contract/Declarer", auctionsDf.filter(pl.col("SameAuction")), handsWithAuctions)),
-        list(_summaryRow("Diff Auction, Same Contract/Declarer", auctionsDf.filter(pl.col("SameContract") & ~pl.col("SameAuction")), handsWithAuctions)),
-        list(_summaryRow("Intervention at Neither Table", auctionsDf.filter(_is_invalid("Intervention_1") & _is_invalid("Intervention_2")), handsWithAuctions)),
-        list(_summaryRow("Intervention at One Table", auctionsDf.filter(_is_valid("Intervention_1").xor(_is_valid("Intervention_2"))), handsWithAuctions)),
-        list(_summaryRow("Intervention at Both Tables", auctionsDf.filter(_is_valid("Intervention_1") & _is_valid("Intervention_2")), handsWithAuctions)),
-        list(_summaryRow("Same auction and lead at both tables", auctionsDf.filter(pl.col("SameAuction") & pl.col("SameLead")), handsWithAuctions)),
-        list(_summaryRow("Same auction, different leads", auctionsDf.filter(pl.col("SameAuction") & ~pl.col("SameLead")), handsWithAuctions)),
-        list(_summaryRow("Same contract/declarer, Different auctions,same lead", auctionsDf.filter(pl.col("SameContract") & ~pl.col("SameAuction") & pl.col("SameLead")), handsWithAuctions)),
-        list(_summaryRow("Same contract/declarer, Different auctions,different leads", auctionsDf.filter(pl.col("SameContract") & ~pl.col("SameAuction") & ~pl.col("SameLead")), handsWithAuctions)),
-        list(_summaryRow("Same Opening, Intervention at Neither Table", auctionsDf.filter(pl.col("SameOpening") & _is_invalid("Intervention_1") & _is_invalid("Intervention_2")), handsWithAuctions)),
-        list(_summaryRow("Same Opening, Intervention at One Table", auctionsDf.filter(pl.col("SameOpening") & _is_valid("Intervention_1").xor(_is_valid("Intervention_2"))), handsWithAuctions)),
-        list(_summaryRow("Same Opening, Intervention at Both Tables", auctionsDf.filter(pl.col("SameOpening") & _is_valid("Intervention_1") & _is_valid("Intervention_2")), handsWithAuctions))
+        list(_summaryRow("Hands with valid auctions matching contracts", auctionsDf, handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Contract/Side", auctionsDf.filter(pl.col("SameBid") & pl.col("SameDeclSide")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Contract/Declarer", auctionsDf.filter(pl.col("SameContract")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Contract/Side, Diff Declarer", auctionsDf.filter(pl.col("RightSide")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Contract, Diff Sides", auctionsDf.filter(pl.col("SameBid") & ~pl.col("SameDeclSide")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Different contracts, same side", auctionsDf.filter(pl.col("SameDeclSide") & ~pl.col("SameBid")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Different contracts, different sides", auctionsDf.filter(~pl.col("SameDeclSide") & ~pl.col("SameBid")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same contract, declarer, and lead", auctionsDf.filter(pl.col("SameContract") & pl.col("SameLead")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same contract and declarer, different lead", auctionsDf.filter(pl.col("SameContract") & ~pl.col("SameLead")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Auction/Contract/Declarer", auctionsDf.filter(pl.col("SameAuction")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Diff Auction, Same Contract/Declarer", auctionsDf.filter(pl.col("SameContract") & ~pl.col("SameAuction")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Intervention at Neither Table", auctionsDf.filter(_is_invalid("Intervention_1") & _is_invalid("Intervention_2")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Intervention at One Table", auctionsDf.filter(_is_valid("Intervention_1").xor(_is_valid("Intervention_2"))), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Intervention at Both Tables", auctionsDf.filter(_is_valid("Intervention_1") & _is_valid("Intervention_2")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same auction and lead at both tables", auctionsDf.filter(pl.col("SameAuction") & pl.col("SameLead")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same auction, different leads", auctionsDf.filter(pl.col("SameAuction") & ~pl.col("SameLead")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same contract/declarer, Different auctions,same lead", auctionsDf.filter(pl.col("SameContract") & ~pl.col("SameAuction") & pl.col("SameLead")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same contract/declarer, Different auctions,different leads", auctionsDf.filter(pl.col("SameContract") & ~pl.col("SameAuction") & ~pl.col("SameLead")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Opening, Intervention at Neither Table", auctionsDf.filter(pl.col("SameOpening") & _is_invalid("Intervention_1") & _is_invalid("Intervention_2")), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Opening, Intervention at One Table", auctionsDf.filter(pl.col("SameOpening") & _is_valid("Intervention_1").xor(_is_valid("Intervention_2"))), handsWithAuctions)),
+        list(_summaryRow("Valid auction, Same Opening, Intervention at Both Tables", auctionsDf.filter(pl.col("SameOpening") & _is_valid("Intervention_1") & _is_valid("Intervention_2")), handsWithAuctions))
     ]
     df_to_csv(
         pl.DataFrame(
@@ -564,6 +618,14 @@ def generate_summaries(expandedDf: pl.DataFrame, auctionsDf: pl.DataFrame) -> No
         },
         autofit=True
     )
+    # chart_data: List[List[Any]] = [
+    #     list(_chartRow("All Hands", auctionsDf, handsWithAuctions)),
+    #     list(_chartRow("Same Contract/Side", auctionsDf.filter(pl.col("SameBid") & pl.col("SameDeclSide")), handsWithAuctions)),
+    #     list(_chartRow("Same Contract/Declarer", auctionsDf.filter(pl.col("SameContract")), handsWithAuctions)),
+    #     list(_chartRow("Same Auction/Contract/Declarer", auctionsDf.filter(pl.col("SameAuction")), handsWithAuctions)),
+    #     list(_chartRow("Same Auction/Contract/Declarer/Lead", auctionsDf.filter(pl.col("SameAuction") & pl.col("SameLead")), handsWithAuctions)),
+    # ]
+    # generate_2d_waterfall(chart_data, "Frequency", "Ave Swing", "Swing_Chart")
 
 def analyze_early_bids(auctionsDf: pl.DataFrame) -> None:
     # Process Early Bids
@@ -613,10 +675,12 @@ def analyze_openings(auctionsDf: pl.DataFrame) -> None:
         .group_by("Opening_2")
         .agg([
             pl.count().alias("SameOpeningCount"),
-            pl.col("SameAuction").sum().alias("SameAuctionCount")
+            pl.col("SameAuction").sum().alias("SameAuctionCount"),
+            pl.col("SameContract").sum().alias("SameContractCount")
         ])
         .rename({"Opening_2": "Opening"})
-        .with_columns([(pl.col("SameAuctionCount")/pl.col("SameOpeningCount")).alias("SameAuctionPercent")])
+        .with_columns([(pl.col("SameAuctionCount")/pl.col("SameOpeningCount")).alias("SameAuctionPercent"),
+                       (pl.col("SameContractCount")/pl.col("SameOpeningCount")).alias("SameContractPercent")])
     )
 
     openings_melted = pl.concat([
@@ -652,7 +716,9 @@ def analyze_openings(auctionsDf: pl.DataFrame) -> None:
             "SameOpeningCount",
             "SameOpeningPercent",
             "SameAuctionCount",
-            "SameAuctionPercent"
+            "SameAuctionPercent",
+            "SameContractCount",
+            "SameContractPercent"
         ])
 
     df_to_csv(
@@ -667,7 +733,7 @@ def analyze_openings(auctionsDf: pl.DataFrame) -> None:
         autofit=True
     )
 
-def add_leader_view(full_boards_df: pl.DataFrame) -> pl.DataFrame:
+def add_leader_view(boardsDf: pl.DataFrame) -> pl.DataFrame:
     # Create and write the Opening Lead Sheet
     def get_leader_holding(hand: str, lead: str) -> str:
         try:
@@ -675,8 +741,8 @@ def add_leader_view(full_boards_df: pl.DataFrame) -> pl.DataFrame:
             suitHoldings: List[str] = hand.split(".")
             holding:str = suitHoldings[SUIT_INDICES[suit]]
             return holding
-        except:
-            # logging.info(f"No lead {lead} in hand {hand}")
+        except (IndexError, KeyError, AttributeError) as e:
+            logging.info(f"No lead {lead} in hand {hand}: {e}")
             return ""
     
     def lead_type(holding: str, played_card: str) -> str:
@@ -717,7 +783,7 @@ def add_leader_view(full_boards_df: pl.DataFrame) -> pl.DataFrame:
             return f"{rank}_BEST"
         
     LeaderView_columns = ["BoardUID", "DealNum", "Contract", "Declarer", "Leader", "Lead", "SuitHolding", "Lead_Type", "Led_Suit_Len"]
-    full_boards_df = full_boards_df.with_columns(
+    boardsDf = boardsDf.with_columns(
             pl.col("Declarer").map_elements(lambda x: Direction.from_str(x).next().abbreviation(), return_dtype=pl.Utf8).alias("Leader")
         ).with_columns(
             _create_player_column_mapping("Leader", "Hand").alias("LeaderHand")
@@ -731,8 +797,8 @@ def add_leader_view(full_boards_df: pl.DataFrame) -> pl.DataFrame:
             .alias("Lead_Type"),
             pl.col("SuitHolding").map_elements(len, return_dtype=pl.Int64).alias("Led_Suit_Len")
         )
-    df_to_csv(full_boards_df.select(pl.col(LeaderView_columns)), "LeaderView")
-    return full_boards_df
+    df_to_csv(boardsDf.select(pl.col(LeaderView_columns)), "LeaderView")
+    return boardsDf
 
 # Create and write the OpenerView sheet
 def relative_vulnerability(vul: str, dirn: str) -> str:
@@ -742,30 +808,108 @@ def relative_vulnerability(vul: str, dirn: str) -> str:
     elif vul == 'B':
         return "Both"
     elif vul == 'N':
-        return "We" if (seat == Direction.NORTH or seat == Direction.SOUTH) else "They"
+        return "We" if (seat == 'N' or seat == 'S') else "They"
     elif vul == 'E':
-        return "We" if (seat == Direction.EAST or seat == Direction.WEST) else "They"
+        return "We" if (seat == 'E' or seat == 'W') else "They"
     else:
         return "Unknown"
 
-def add_opener_view(full_boards_df: pl.DataFrame) -> pl.DataFrame:
-    OpenerView_columns = ["BoardUID", "DealNum", "Dealer", "Opener", "OpenSeat", "Opening", "OpenerShape", "OpenerPattern", "OpenerHCP", "OpenerVul"]
-    full_boards_df = full_boards_df.with_columns([
-        pl.struct("Vulnerability", "Opener")
-        .map_elements(lambda combined: relative_vulnerability(combined["Vulnerability"], combined["Opener"]), return_dtype=pl.Utf8)
-        .alias("OpenerVul"),
-        _create_player_column_mapping("Opener", "Shape").alias("OpenerShape"),
-        _create_player_column_mapping("Opener", "Pattern").alias("OpenerPattern"),
-        _create_player_column_mapping("Opener", "Total_HCP").alias("OpenerHCP")]
-    )
-    df_to_csv(full_boards_df.select(pl.col(OpenerView_columns)), "OpenerView")
-    return full_boards_df
+# Define helper functions for map_elements
+def get_lho_bid(row):
+    """Get the LHO bid (next bid after opening)"""
+    bids = row["_bids"] if row["_bids"] else []
+    open_seat = row["OpenSeat"]
     
-def add_declarer_view(full_boards_df: pl.DataFrame) -> pl.DataFrame:
+    # Check if the index exists (OpenSeat + 1 for next bid)
+    if open_seat is not None and 0 <= open_seat < len(bids):
+        return bids[open_seat]
+    return ""
+
+def get_response_bid(row):
+    """Get the response bid (second bid after opening)"""
+    bids = row["_bids"] if row["_bids"] else []
+    open_seat = row["OpenSeat"]
+    
+    # Check if the index exists (OpenSeat + 2 for second bid after)
+    if open_seat is not None and 0 <= open_seat + 1 < len(bids):
+        return bids[open_seat + 1]
+    return ""
+
+def add_opener_view(boardsDf: pl.DataFrame) -> pl.DataFrame:
+    boardsDf = boardsDf.with_columns([
+            pl.col("Opener").map_elements(lambda x: Direction.from_str(x).next().abbreviation(), return_dtype=pl.Utf8).alias("LHO"),
+            pl.col("Opener").map_elements(lambda x: Direction.from_str(x).previous().abbreviation(), return_dtype=pl.Utf8).alias("RHO")
+        ]).with_columns([
+            pl.struct("Vulnerability", "Opener")
+            .map_elements(lambda combined: relative_vulnerability(combined["Vulnerability"], combined["Opener"]), return_dtype=pl.Utf8)
+            .alias("OpenerVul"),
+            _create_player_column_mapping("Opener", "Hand").alias("OpenerHand"),
+            _create_player_column_mapping("LHO", "Hand").alias("LHOHand"),
+            _create_player_column_mapping("Responder", "Hand").alias("ResponderHand"),
+            _create_player_column_mapping("RHO", "Hand").alias("RHOHand"),
+            _create_player_column_mapping("Opener", "Shape").alias("OpenerShape"),
+            _create_player_column_mapping("Opener", "Pattern").alias("OpenerPattern"),
+            _create_player_column_mapping("Opener", "Total_HCP").alias("OpenerHCP"),
+            _create_player_column_mapping("LHO", "Shape").alias("LHOShape"),
+            _create_player_column_mapping("LHO", "Pattern").alias("LHOPattern"),
+            _create_player_column_mapping("LHO", "Total_HCP").alias("LHOHCP"),
+            _create_player_column_mapping("Responder", "Shape").alias("ResponderShape"),
+            _create_player_column_mapping("Responder", "Pattern").alias("ResponderPattern"),
+            _create_player_column_mapping("Responder", "Total_HCP").alias("ResponderHCP"),
+            _create_player_column_mapping("RHO", "Shape").alias("RHOShape"),
+            _create_player_column_mapping("RHO", "Pattern").alias("RHOPattern"),
+            _create_player_column_mapping("RHO", "Total_HCP").alias("RHOHCP")
+        ])
+    
+    # Create the _bids column first
+    boardsDf = boardsDf.with_columns([
+        pl.col("Auction").str.split("-").alias("_bids")
+    ])
+    
+    boardsDf = boardsDf.with_columns([
+        # LHO bid (next bid after opening)
+        pl.struct(["_bids", "OpenSeat"])
+        .map_elements(get_lho_bid, return_dtype=pl.Utf8)
+        .alias("LHOBid"),
+        
+        # Response bid (second bid after opening)
+        pl.struct(["_bids", "OpenSeat"])
+        .map_elements(get_response_bid, return_dtype=pl.Utf8)
+        .alias("Response")
+    ]).drop(["_bids", "Responder", "LHO", "RHO"])
+    return boardsDf
+    
+def write_opener_view(full_deals_df: pl.DataFrame) -> None:
+    """Write OpenerView.csv with OpenerIMPs from full_deals_df."""
+    
+    OpenerView_columns = [
+        "BoardUID", "DealNum", "Dealer", "Opener", "OpenSeat", "Opening", 
+        "OpenerShape", "OpenerPattern", "OpenerHCP", "OpenerVul", "OpenerIMPs"
+    ]
+    
+    # Define the columns we want from each table
+    columns_to_unpivot = [
+        "BoardUID", "Opener", "OpenSeat", "Opening", 
+        "OpenerShape", "OpenerPattern", "OpenerHCP", "OpenerVul", "OpenerIMPs"
+    ]
+    
+    # Create DataFrames for each table by renaming _1 and _2 columns
+    table1_cols = [pl.col("DealNum"), pl.col("Dealer")] + [pl.col(f"{col}_1").alias(col) for col in columns_to_unpivot]
+    table2_cols = [pl.col("DealNum"), pl.col("Dealer")] + [pl.col(f"{col}_2").alias(col) for col in columns_to_unpivot]
+
+    table1 = full_deals_df.select(table1_cols)
+    table2 = full_deals_df.select(table2_cols)
+    
+    # Combine both tables vertically
+    opener_view_df = pl.concat([table1, table2])
+    
+    df_to_csv(opener_view_df.select(pl.col(OpenerView_columns)).sort("BoardUID"), "OpenerView")
+
+def add_declarer_view(boardsDf: pl.DataFrame) -> pl.DataFrame:
     # Create and write the DeclarerView sheet
     DeclarerView_columns = ["BoardUID", "DealUID", "Declarer", "DeclarerVul", "DeclarerScore", 
                             "DeclarerHCP", "DummyHCP", "TotalHCP", "DeclarerShape", "DummyShape", "DeclarerPattern", "DummyPattern"]
-    full_boards_df = full_boards_df.with_columns(
+    boardsDf = boardsDf.with_columns(
             pl.col("Declarer").map_elements(lambda x: Direction.from_str(x).partner().abbreviation(), return_dtype=pl.Utf8).alias("Dummy")
         ).with_columns([
             pl.struct("Vulnerability", "Declarer")
@@ -774,15 +918,17 @@ def add_declarer_view(full_boards_df: pl.DataFrame) -> pl.DataFrame:
             _create_player_column_mapping("Declarer", "Shape").alias("DeclarerShape"),
             _create_player_column_mapping("Declarer", "Pattern").alias("DeclarerPattern"),
             _create_player_column_mapping("Declarer", "Total_HCP").alias("DeclarerHCP"),
+            _create_player_column_mapping("Declarer", "Hand").alias("DeclarerHand"),
             _create_player_column_mapping("Dummy", "Shape").alias("DummyShape"),
             _create_player_column_mapping("Dummy", "Pattern").alias("DummyPattern"),
             _create_player_column_mapping("Dummy", "Total_HCP").alias("DummyHCP"),
+            _create_player_column_mapping("Dummy", "Hand").alias("DummyHand"),
             (pl.col("RawScoreNS") * pl.when(pl.col("Declarer").is_in(["N", "S"])).then(1).otherwise(-1)).alias("DeclarerScore")]
         ).with_columns(
             (pl.col("DeclarerHCP") + pl.col("DummyHCP")).alias("TotalHCP")
         ).drop("Dummy")
-    df_to_csv(full_boards_df.select(pl.col(DeclarerView_columns)), "DeclarerView")
-    return full_boards_df
+    df_to_csv(boardsDf.select(pl.col(DeclarerView_columns)), "DeclarerView")
+    return boardsDf
 
 def _analyze_records(processed_dealsdf: pl.DataFrame, processed_boardsdf: pl.DataFrame) -> None:
     # Create an expanded table with deal info and info about each board in a single row
@@ -795,27 +941,34 @@ def _analyze_records(processed_dealsdf: pl.DataFrame, processed_boardsdf: pl.Dat
                           .sort(["count", "group_size"], descending=[True, False])
                           .item(0, "group_size"))
     if commonest_board_count != TABLES_IN_TEAM_GAME:
-        print(f"Most common board count is {commonest_board_count}. Unexpected, exiting")
+        logging.error(f"Most common board count is {commonest_board_count}. Unexpected, exiting")
         raise ValueError
-    
-    expandedDf: pl.DataFrame = expand_matches(processed_dealsdf, processed_boardsdf)
-    df_to_csv(expandedDf, "FullData")
-    
-    auctionsDf: pl.DataFrame = expandedDf.filter((pl.col("AuctionCheck_1") == "Legal") & (pl.col("AuctionCheck_2") == "Legal"))
-    generate_summaries(expandedDf, auctionsDf)
-    analyze_early_bids(auctionsDf)
-    analyze_openings(auctionsDf)
-    
-    full_boards_df = processed_dealsdf.join(processed_boardsdf, on="DealUID", how="inner")
-    if "DD_W_N" in processed_dealsdf.columns: # Double-dummy analysis included
-        full_boards_df = process_pars(full_boards_df)
-        
-    full_boards_df = add_leader_view(full_boards_df)
-    full_boards_df = add_opener_view(full_boards_df)
-    full_boards_df = add_declarer_view(full_boards_df)
 
-    # Write FullBoards.csv
-    df_to_csv(full_boards_df, "FullBoards")
+    processed_boardsdf = _reorder_columns(processed_boardsdf)
+    validBoardsDf: pl.DataFrame = processed_dealsdf.join(processed_boardsdf.drop("SourceType"), on="DealUID", how="inner")
+    validBoardsDf = validBoardsDf.filter(pl.col("AuctionCheck") == "Legal")
+    validBoardsDf = validBoardsDf.filter((pl.col("ContractValidation") != "Mismatch") & (pl.col("ContractValidation") != "Missing"))
+    validBoardsDf = validBoardsDf.filter((pl.col("DeclarerValidation") != "Mismatch") & (pl.col("DeclarerValidation") != "Missing"))
+    validBoardsDf = validBoardsDf.filter((pl.col("LeadValidation") != "Mismatch") & (pl.col("LeadValidation") != "Missing"))
+    validBoardsDf = validBoardsDf.filter((pl.col("ScoreValidation") != "Mismatch") & (pl.col("ScoreValidation") != "Missing"))
+    deal_counts: int = validBoardsDf.group_by("DealUID").count()
+    deals_to_keep = deal_counts.filter(pl.col("count") == 2).select("DealUID")
+    validBoardsDf = validBoardsDf.join(deals_to_keep, on="DealUID", how="inner").sort(["DealUID", "TableID"])
+    
+    if "DD_W_N" in processed_dealsdf.columns: # Double-dummy analysis included
+        validBoardsDf = process_pars(validBoardsDf)
+    validBoardsDf = add_opener_view(validBoardsDf)
+    validBoardsDf = add_leader_view(validBoardsDf)
+    validBoardsDf = add_declarer_view(validBoardsDf)
+    df_to_csv(validBoardsDf, "FullBoards")
+    
+    validDf = expand_matches(processed_dealsdf, validBoardsDf)
+    df_to_csv(validDf, "FullDeals")
+    
+    generate_summaries(validDf)
+    analyze_early_bids(validDf)
+    analyze_openings(validDf)
+    write_opener_view(validDf)
     
 def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdir: Optional[Path] = None) -> Tuple[pl.DataFrame, pl.DataFrame]:
     logging.warning("Start process_records")
@@ -824,6 +977,15 @@ def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdi
     rawdf: pl.DataFrame = pl.from_records(reclist)
     df_to_csv(rawdf, "RawData")
 
+    # Validate dealer and vulnerability per deal
+    rawdf = rawdf.with_columns([
+        # Compute expected dealer and vulnerability for all rows
+        pl.col("DealNum").map_elements(dealNo2dealer, return_dtype=pl.Utf8).alias("dealer2"),
+        pl.col("DealNum").map_elements(dealNo2vul, return_dtype=pl.Utf8).alias("vul2"),
+    ])
+    rawdf = validate_and_combine_columns(rawdf, "Dealer", "dealer2", "DealerValidation")
+    rawdf = validate_and_combine_columns(rawdf, "Vulnerability", "vul2", "VulValidation")
+    rawdf = rawdf.drop(["dealer2", "vul2"])
     # Add UIDs and fix scoring form
     rawdf = add_uids(rawdf)
     rawdf = update_scoring_form(rawdf)
@@ -839,7 +1001,7 @@ def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdi
     df_to_csv(handsdf, "hands")
     
     # Validate dealer and vulnerability per deal
-    processed_dealsdf = dealsdf.drop(["Hands"]).join(handsdf.drop(["Dealer", "Vulnerability"]), on='HandUID', how='left')
+    processed_dealsdf = dealsdf.join(handsdf.drop(["Dealer", "Vulnerability"]), on='HandUID', how='left')
     df_to_csv(processed_dealsdf, "ProcessedDeals")
     
     # Now process each board
@@ -855,9 +1017,9 @@ def process_records(reclist: List[BoardRecord], generateDD: bool, outdir: Option
     processed_dealsdf, processed_boardsdf = _process_records(reclist, generateDD, outdir)
     return (list(processed_dealsdf.iter_rows(named=True)), list(processed_boardsdf.iter_rows(named=True)))
 
-def analyze_records(outdir: Path, deals_csv: str, boards_csv: str) -> None:
+def analyze_records(outdir: Path) -> None:
     global output_dir
     output_dir = outdir
-    processed_dealsdf = pl.read_csv(f"{output_dir}/{deals_csv}.csv")
-    processed_boardsdf = pl.read_csv(f"{output_dir}/{boards_csv}.csv")
+    processed_dealsdf = pl.read_csv(f"{output_dir}/ProcessedDeals.csv")
+    processed_boardsdf = pl.read_csv(f"{output_dir}/ProcessedBoards.csv")
     _analyze_records(processed_dealsdf, processed_boardsdf)

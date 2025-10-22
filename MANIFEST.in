@@ -1,0 +1,39 @@
+# Include documentation
+include README.md
+include LICENSE
+include requirements.txt
+
+# Include DLL for double-dummy solver (Windows only)
+include ingest/dds.dll
+
+# Exclude generated outputs and caches
+recursive-exclude output *
+recursive-exclude output.sort *
+recursive-exclude DB *
+recursive-exclude json_output *
+recursive-exclude lin_output *
+recursive-exclude pbn_output *
+recursive-exclude rbn_output *
+recursive-exclude sav *
+recursive-exclude sav.sort *
+recursive-exclude extras *
+
+# Exclude Python cache
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+
+# Exclude IDE files
+recursive-exclude * .vscode
+recursive-exclude * .idea
+
+# Exclude temporary files
+recursive-exclude * *.tmp
+recursive-exclude * *.bak
+recursive-exclude * *~
+
+# Exclude generated data files
+recursive-exclude * *.csv
+recursive-exclude * *.xlsx
+recursive-exclude * ~$*.xlsx
+
+

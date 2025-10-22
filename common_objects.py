@@ -1,4 +1,5 @@
 import re
+import logging
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, List, Any
 from enum import Enum, IntEnum
@@ -235,7 +236,7 @@ def guessDealNum(dlr: str, vul: str) -> int:
     try:
         return(dealMap[dlr][vul])
     except:
-        print(f"Cannot compute deal num for dealer {dlr}, vul {vul}")
+        logging.error(f"Cannot compute deal num for dealer {dlr}, vul {vul}")
         return 0
     
 def safe_get(obj: Any, key: str, default: Any = None) -> Any:

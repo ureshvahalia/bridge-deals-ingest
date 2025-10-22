@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 import endplay.config as config
 from endplay.types import Deal, Denom, Player, Vul
 from endplay.dds import calc_all_tables, par
+import logging
 
 vul2dds: Dict[str, Vul] = {
     "Z": Vul.none,
@@ -62,8 +63,8 @@ def create_dd_columns(df: pl.DataFrame, batch_size: int = 32) -> pl.DataFrame:
             try:
                 deal = Deal.from_pbn(row['Hands'])
                 batch_deals.append(deal)
-            except Exception as e:
-                print(f"Error parsing PBN hand at index {batch_start + len(batch_deals)}: {row['Hands'][:50]}... Error: {e}")
+            except (ValueError, IndexError) as e:
+                logging.error(f"Error parsing PBN hand at index {batch_start + len(batch_deals)}: {row['Hands'][:50]}... Error: {e}")
                 raise
         
         # Calculate DD tables for the batch

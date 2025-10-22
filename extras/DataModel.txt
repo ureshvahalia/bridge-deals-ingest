@@ -1,0 +1,68 @@
+enum Direction  { "N", "E", "S", "W" }
+enum Denom      { "S", "H", "D", "C", "N" }
+
+Note:
+    pos:                uint
+    text:               String
+
+Card:                   uint
+
+Hand:                   Card[13]
+
+Bid:                    String
+
+HandAttributes:         Dict
+
+PlayedTrick:
+    Lead:               Direction
+    Cards:              Card[4]
+
+Contract_t:
+    Contract:           String
+
+Event:  Hierarchical name space with MainEvent, SubEvent, round
+    EventUID:           uint32[2]
+    EventName:          String
+    Location:           String
+    Date:               datetime
+    Details:            String
+    ScoringForm:        enum { "Rubber", "IMP Pairs", "IMPs", "VP", "MatchPoints", "BAM" }
+    Deals:              Deal[n]
+
+Deal:   One deal played potentially at multiple tables
+    DealUID:            uint64
+    EventID*:           uint32[2], Backptr to Event
+    DealNum:            uint
+    Dealer:             Direction
+    Vulnerability       enum { "None", "NS", "EW", "Both" }
+    Hands               Hand[4]
+    HandAttrs           HandAttributes[4]
+    boards              Board[n]
+
+Board:  One deal played at one specific table
+    DealUID*:           uint64, Backptr to Deal
+    BoardUID:           uint64
+    TableID:            uint
+    Players:            Strings[4]
+    Declarer:           Direction
+    TheContract:        Contract_t
+    TricksMade:         uint
+    RawScoreNS:         int
+    ScoreNS:            int
+    Auction:            Bid[n]
+    Play:               PlayedTrick[n]
+    AuctionAttributes:  Dict
+    PlayAttributes:     Dict
+    AuctionNotes:       Note[n]
+    PlayNotes:          Note[n]
+    Commentary:         String[n]
+
+DB Operations:
+findEvent (EventName: str) -> uint32[2], Event
+addEvent (newEvent: Event) -> uint32[2]
+getEvent (id: uint32[2]) -> Event
+
+Errors seen while processing VuGraph files:
+* board_name should start with 'o' or 'c', but sometimes just has the board number.
+This happens for some test  vugraphs. We can either drop these boards or do some hack 
+* Hands info (md tag) is empty in some files. Again, can either drop these boards or keep hand blank

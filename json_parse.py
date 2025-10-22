@@ -28,6 +28,8 @@ def parse_names(players: Optional[Dict[str, Dict[str, str]]]) -> Dict[str, Dict[
     # Returns dictionary mapping directions to player names
     OR_names: Dict[str, str] = safe_get(players, "OR", {})
     CR_names: Dict[str, str] = safe_get(players, "CR", {})
+    if not CR_names:
+        pass
 
     return  {
         'OR':   {
@@ -129,7 +131,7 @@ def parse_json_file(file_path: Path) -> List[BoardRecord]:
                     tricksMade: Optional[int] = room_data.get('Tricks') or (0 if contractStr == 'Pass' else None)
                     board_record = BoardRecord(
                         EventName=event_name,
-                        MatchName=match_name + f": Session {session_number}" if session_number else "",
+                        MatchName=match_name + (f": Session {session_number}" if session_number else ""),
                         EventLocation=location,
                         MatchDate=session_date,
                         ScoringForm=scoring,

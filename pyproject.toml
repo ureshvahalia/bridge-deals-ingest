@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bridge-deals-ingest"
+version = "0.1.0"
+description = "A comprehensive tool for ingesting, processing, and analyzing bridge game data from various formats"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT License"}
+authors = [
+    {name = "Uresh Vahalia", email = "uresh@vahalia.com"}
+]
+keywords = ["bridge", "card games", "data analysis", "pbn", "lin", "vugraph"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment :: Board Games",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+dependencies = [
+    "polars>=1.0.0",
+    "matplotlib>=3.7.0",
+    "numpy>=1.24.0",
+    "RapidFuzz>=3.0.0",
+    "line-profiler>=4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/bridge-deals-ingest"
+Repository = "https://github.com/yourusername/bridge-deals-ingest"
+Issues = "https://github.com/yourusername/bridge-deals-ingest/issues"
+
+[project.scripts]
+bridge-ingest = "driver:main"
+# Example: You could add more commands here:
+# bridge-analyze = "process_records:analyze_records"
+# bridge-parse-pbn = "pbn_parse:parse_pbn_file"
+
+[tool.setuptools]
+py-modules = [
+    "driver",
+    "ingest", 
+    "process_records",
+    "auction",
+    "scoring",
+    "common_objects",
+    "fuzzy",
+    "dds_wrapper",
+    "pbn_parse",
+    "lin_parse",
+    "json_parse",
+    "rbn_parse"
+]
+
+[tool.setuptools.package-data]
+"*" = ["*.dll"]
+
+[tool.black]
+line-length = 120
+target-version = ['py39']
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+

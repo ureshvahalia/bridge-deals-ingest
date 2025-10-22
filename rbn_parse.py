@@ -419,9 +419,3 @@ def parse_rbn_file(file_path: Path) -> List[BoardRecord]:
             records.append(board_record)
 
     return records
-
-# Example usage
-if __name__ == "__main__":
-    file_path = Path("example.rbn")
-    result = parse_rbn_file(file_path)
-    print(f"Parsed {len(result)} boards")

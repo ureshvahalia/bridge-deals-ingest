@@ -1,0 +1,173 @@
+Bridge Deals DB:
+===============
+
+Notes:
+-----
+    1.  An event may have multiple matches.
+    2.  Typically, each round, session, pair of teams, etc. is treated as a 
+        separate match. 
+    3.  Also, an event such as the Summer 2003 NABC may have multiple
+        sub-events such as LM Pairs, Knock-out Teams, etc. I have chosen to
+        keep things simple by having each session of each subevent be a 
+        separate match, and not tried to do a finer hierarchy of subevents
+    4.  This endeavor is presently focused on team games. Hence deals are 
+        unique only within an event-match combo. The same deal, played in 
+        different matches, will be treated as different deals.
+    5.  A deal is a set of four hands alongwith a unique deal number,
+        dealer, and vulnerability. It will typically be played at exactly
+        two tables.
+    6.  A board is the record of a deal played at a single table. Typically,
+        there is a 2-to-1 relationship between deals and boards.
+    7.  A deal may be in multiple boards for non-team matches (e.g., pairs or 
+        BAM). It may appear in fewer than 2 boards if there is missing data.
+    8.  Currently, I have chosen to only look at the first two tables when a 
+        deal has more than two boards, and ignore deals with fewer than two.
+
+Usage:
+-----
+driver.py is the entry point for the program.
+Arguments: driver.py db_locn path1 [path2 ...]
+    where db_locn is a folder to contain all the analysis files (will be 
+    created if it does not exist), and
+    path1, path2, ... are names of files or folders containing the raw files
+Currently, will only process .pbn files. Will add .rbn, .lin, and .json soon
+On completion, will deposit the following files in the output directory:
+* all.csv:
+    A flat file containing all the raw data with some data validation but 
+    minimal analysis
+* events.csv, deals.csv, and boards.csv: 
+    These contain a relational representation of all.csv 
+    Data is converted to a standard format
+* ProcessedBoards.csv and ProcessedDeals.csv:
+    Data from deals.csv and  boards.csv with derived feature per deal and boards
+* FullData.csv:
+    File with both boards of each deal in a single row, alongwith deal features
+    and derived features that compare the two boards
+* Summary.csv:
+    Summary of key findings of data analysis
+* EarlyBids.csv, LeaderView.csv, OpenerView.csv, and Openings.csv:
+    Files with different types of analysis on the data
+
+General approach:
+----------------
+1. Ingest Files:
+    For each file under the specified paths, invoke its parser
+    This returns a list of board records in the collector object, with one 
+    entry per board. The board record has all the event, deal, and board data
+2. Process Data:
+    Save the ingested records to all.csv
+    Convert it to relational tables and save to events.csv, deals.csv, and 
+    boards.csv
+    Create the analysis files listed above
+
+Ingestion Format:
+----------------
+The ingest phase creates records from all kinds of input files (so far just 
+pbn, but plan to add rbn, lin, and json at least) and converts them to a 
+common format, defined as follows (common_objects.py contains these defs):
+
+class BoardRecord:
+    """Represents a bridge board with all its attributes."""
+    """Each line shows the column name, data type, default value, and notes
+    EventName: str = "UNKNOWN"
+    MatchName: str = "UNKNOWN"
+        # constructed from filename, stage, round, section, etc
+    EventLocation: str = "UNKNOWN"
+    MatchDate: str = "UNKNOWN"
+        # YYYY.MM.DD format
+    ScoringForm: str = "UNKNOWN"
+        # "IMPs", "MPs", or "UNKNOWN"
+        # If not explicitly specified, I am assuming IMPs if most deals
+        # in the match have two boards, MPs if > 2, and UNKNOWN if only 1
+    FilePath: str = ""
+        # local pathname on my system
+    * DealNum: int = 0
+    * Dealer: str = ""
+        # "N", "E", "S", or "W"
+    * Vulnerability: str = "X"
+        # "Z" = None, "N" = NS, "E" = EW, "B" = Both, "X" = Unknown/Any
+    * Hands: str = ""
+        # In standard PBN format (easiest for import in DDS)
+    TableID: str = ""
+        # From table/room name if available, else player names N-S vs E-W
+    North: str = ""
+    East: str = ""
+    South: str = ""
+    West: str = ""
+    * Declarer: Optional[str] = None
+        # "N", "E", "S", or "W"
+    * Contract: Optional[str] = None
+        # "AP" for all pass, else standard format, e.g., 4S, 1NX, 2HXX, etc
+    * TricksMade: Optional[int] = None
+    * RawScoreNS: Optional[int] = None
+    * Auction: Optional[str] = ""
+        # bids separated by "-", "P" for Pass, N for notrump. 
+        Final 3 passes dropped
+    * Play: str = ""
+        # cards played in order, separated by "-", tricks separated by ","
+    * Lead: str = ""
+    BiddingMD: str = ""
+        # Not yet implemented
+    Commentary: str = ""
+        # Not yet implemented
+
+
+Data Processing Steps:
+---------------------
+1.  Create unique IDs for each unique event, match (matchID unique only within 
+    the event), deal, and board. If the same deal is played in two different 
+    matches (or, less likely, events), they are considered different deals and
+    assigned different dealUIDs
+2.  For each deal, analyze hands to derive hand features (pattern, shape, total
+    HCP, controls, and length and HCP in each suit)
+3.  Eliminate all records that are missing the hands
+4.  Write out all.csv, and separate the event, deal, and board-specific info
+5.  Write events.csv, deals.csv, and boards.csv, saving only the unique entries
+6.  Save the deals along with derived deal features to ProcessedDeals.csv
+7.  Process each board to validate the auction and derive board features
+    (opener, opening side, declarer, declaring side, responder, intervener, 
+    advancer, opening, opening seat, intervention, auction length (excluding 
+    the three passes at the end)).
+8.  Also analyze the contract to determine additional board features (contract
+    level (AllPass/Partial/Game/Slam/Grand), strain, and premium)
+9.  Save the boards along with derived board features to ProcessedBoards.csv
+10. Join the processed deal and board information into a table with both 
+    boards and the deal info on one line. Save this to FullData.csv
+11. Perform summary analysis of factors influencing swings and write to
+    Summary.csv
+12. Analyze early bids (one table opens while the other does not) and save
+    results in EarlyBids.csv
+13. Analyze opening bids and save to Openings.csv
+14. Create lead-based analysis and save to LeaderView.csv
+15. Analyze from opener perspective and save to OpenerView.csv
+
+Validation:
+----------
+0.  All four hands present or derivable, complete, and valid    -- Done
+1.  Boards missing auction, contract, and play data.            -- Done
+2.  Boards missing auction and play, but having contract        -- Done
+3.  Mismatch between auction and contract+declarer              -- Done
+4.  Missing dealer and/or vulnerability                         -- Done
+5.  Mismatch between deal number and dealer or vulnerability    -- Done
+6.  Missing score and/or TricksMade                             -- Done
+7.  Mismatch between contract+declarer + TricksMade and score   -- Done
+8.  Board count not 2 for a deal                                -- Done
+9.  Lead missing                                                -- Done
+10. Lead inconsistent with leader hand                          -- Done
+11. Lead inconsistent with Play                                 -- TBD
+
+Fields that need validation: A: Auction, B: Board Count, C: Contract
+D: Dealer, H: Hands, L: Lead, N: DealNo, P: Play, S: Score, 
+T: TricksMade,  V: Vulnerability
+
+The validation process compares the primary value (the one directly provided
+in the board record) with the derived value (the one derived from other
+fields), and sets the varValidation field (e.g. ContractValidation) to one
+of "Match", "Mismatch", "Primary" (primary value present, cannot compute
+derived value), "Derived" (primary value missing, derived value computable),
+and "Missing" (primary value missing, cannot compute derived value). When 
+the primary value is missing but derived value is computable, we set the 
+primary value to the derived value. Thus in ProcessedBoards.csv, the primary
+values are our best assessment of the value of the field. One can tell whether
+it comes from the original primary value or from the derived value by
+looking at the validation column.

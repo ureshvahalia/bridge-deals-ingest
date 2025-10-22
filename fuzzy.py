@@ -12,7 +12,7 @@ def fuzzy_deduplicate_events(
     scorer=fuzz.WRatio,
     case_sensitive: bool = False,
     number_sensitive: bool = True
-) -> Tuple[List[str], Dict[str, str], List[Tuple[str, str, float]]]:
+) -> Dict[str, str]:
     """
     Deduplicate a list of event names using fuzzy string matching.
     
@@ -34,7 +34,7 @@ def fuzzy_deduplicate_events(
     # Remove exact duplicates and keep track of counts
     name_counts = Counter(event_names)
     unique_names = list(name_counts.keys())
-    score_list: List[Tuple[str, str, float]] = []
+    # score_list: List[Tuple[str, str, float]] = []
     
     # Create a custom scoring function that handles case and numbers
     def custom_scorer(str1: str, str2: str) -> float:
@@ -59,7 +59,7 @@ def fuzzy_deduplicate_events(
                 continue
                 
             similarity = custom_scorer(name, other_name)
-            score_list.append((name, other_name, similarity))
+            # score_list.append((name, other_name, similarity))
             if similarity >= similarity_threshold:
                 similar_group.append(other_name)
                 processed.add(other_name)
@@ -67,7 +67,7 @@ def fuzzy_deduplicate_events(
         groups.append(similar_group)
     
     # For each group, find the best representative name
-    unique_events = []
+    # unique_events = []
     mapping = {}
     
     for group in groups:
@@ -78,7 +78,7 @@ def fuzzy_deduplicate_events(
             # Multiple similar names - choose the best representative
             canonical_name = _choose_best_representative(group, name_counts, custom_scorer)
         
-        unique_events.append(canonical_name)
+        # unique_events.append(canonical_name)
         
         # Map all group members to the canonical name
         for name in group:
@@ -89,7 +89,8 @@ def fuzzy_deduplicate_events(
     for original_name in event_names:
         final_mapping[original_name] = mapping[original_name]
     
-    return unique_events, final_mapping, score_list
+    # return unique_events, final_mapping, score_list
+    return final_mapping
 
 
 def _enhanced_similarity_score(

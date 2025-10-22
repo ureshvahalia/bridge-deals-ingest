@@ -1,0 +1,19 @@
+# Core dependencies for bridge-deals-ingest
+# These are the minimal required packages to run the tool
+
+# Data processing
+polars>=1.0.0
+
+# Visualization
+matplotlib>=3.7.0
+
+# Numerical operations
+numpy>=1.24.0
+
+# Fuzzy string matching for event deduplication
+RapidFuzz>=3.0.0
+
+# Performance profiling
+line-profiler>=4.0.0
+
+
