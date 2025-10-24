@@ -128,8 +128,8 @@ The tool generates several CSV files in the output directory:
 - **RawData.csv**: All ingested records with minimal processing
 - **all.csv**: Flat file with all data and validation flags
 - **events.csv**: Unique events and matches
-- **deals.csv**: Unique deals (hands + dealer + vulnerability)
-- **boards.csv**: Individual board records (one per table)
+- **deals.csv**: Unique deals (hands + dealer + vulnerability + match)
+- **boards.csv**: Individual board records (one per deal per table)
 - **hands.csv**: Unique hand combinations with analysis
 
 ### Processed Analysis
@@ -137,16 +137,11 @@ The tool generates several CSV files in the output directory:
 - **ProcessedBoards.csv**: Boards with validated and derived auction/contract data
 - **FullBoards.csv**: Complete board data with all features
 - **FullDeals.csv**: Side-by-side comparison of both tables for each deal
-- **ValidData.csv**: Filtered dataset with only valid/matched records
 
 ### Statistical Analysis
 - **Summary.csv**: Statistical summary of swings and outcomes
 - **Openings.csv**: Analysis of opening bids and their outcomes
 - **EarlyBids.csv**: Analysis of competitive situations where one table opens
-- **OpenerView.csv**: Detailed view from opener's perspective
-- **LeaderView.csv**: Opening lead analysis
-- **DeclarerView.csv**: Declarer play analysis
-- **Swing_Chart.png**: Visualization of swing factors
 
 ## Data Validation
 

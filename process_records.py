@@ -161,10 +161,10 @@ def compare_deal_at_both_tables(expandedDf: pl.DataFrame) -> pl.DataFrame:
                         if (x["RawScoreNS_1"] is not None and x["RawScoreNS_2"] is not None)
                         else 0,
                         return_dtype=pl.Int32)
-            .alias("Team1NS_IMPs")
+            .alias("Team1_IMPs")
     )
     result1 = result1.with_columns(
-        pl.col("Team1NS_IMPs").abs().alias("SWING"),
+        pl.col("Team1_IMPs").abs().alias("SWING"),
         (pl.col("Opener_2") == pl.col("Opener_1")).alias("SameOpener")
     )
     result1 = result1.with_columns(
@@ -192,7 +192,7 @@ def compare_deal_at_both_tables(expandedDf: pl.DataFrame) -> pl.DataFrame:
             .then(pl.when(pl.col("DeclSide_1") == "EW").then(1).otherwise(-1))
             .otherwise(0)
         ).otherwise(0)
-        * pl.col("Team1NS_IMPs")
+        * pl.col("Team1_IMPs")
         ).alias("ShorterAuctionScore")
     )
     result = result1.with_columns(
@@ -206,27 +206,36 @@ def compare_deal_at_both_tables(expandedDf: pl.DataFrame) -> pl.DataFrame:
     )
     # Add OpenerIMPs calculations at the end, before the return statement
     result = result.with_columns([
-        # OpenerIMPs_1: 
-        # - If OpenSide_1 is "NS", use Team1NS_IMPs
-        # - If OpenSide_1 is "EW", use -Team1NS_IMPs
-        # - If blank, use 0
         pl.when(pl.col("OpenSide_1") == "NS")
-        .then(pl.col("Team1NS_IMPs"))
+        .then(pl.col("Team1_IMPs"))
         .when(pl.col("OpenSide_1") == "EW")
-        .then(-pl.col("Team1NS_IMPs"))
+        .then(-pl.col("Team1_IMPs"))
         .otherwise(0)
         .alias("OpenerIMPs_1"),
         
-        # OpenerIMPs_2:
-        # - If OpenSide_2 is "EW", use Team1NS_IMPs
-        # - If OpenSide_2 is "NS", use -Team1NS_IMPs
-        # - If blank, use 0
         pl.when(pl.col("OpenSide_2") == "EW")
-        .then(pl.col("Team1NS_IMPs"))
+        .then(pl.col("Team1_IMPs"))
         .when(pl.col("OpenSide_2") == "NS")
-        .then(-pl.col("Team1NS_IMPs"))
+        .then(-pl.col("Team1_IMPs"))
         .otherwise(0)
         .alias("OpenerIMPs_2")
+    ])
+    
+    # Add DeclarerIMPs calculations at the end, before the return statement
+    result = result.with_columns([
+        pl.when(pl.col("DeclSide_1") == "NS")
+        .then(pl.col("Team1_IMPs"))
+        .when(pl.col("DeclSide_1") == "EW")
+        .then(-pl.col("Team1_IMPs"))
+        .otherwise(0)
+        .alias("DeclarerIMPs_1"),
+        
+        pl.when(pl.col("DeclSide_2") == "EW")
+        .then(pl.col("Team1_IMPs"))
+        .when(pl.col("DeclSide_2") == "NS")
+        .then(-pl.col("Team1_IMPs"))
+        .otherwise(0)
+        .alias("DeclarerIMPs_2")
     ])
     
     return result.with_columns(
@@ -238,7 +247,7 @@ def compare_deal_at_both_tables(expandedDf: pl.DataFrame) -> pl.DataFrame:
         .alias("EBScore")
     )
 
-def expand_matches(dealsDf: pl.DataFrame, boardsDf: pl.DataFrame) -> pl.DataFrame:
+def expand_matches(dealsDf: pl.DataFrame, boardsDf: pl.DataFrame) -> Tuple[pl.DataFrame, pl.DataFrame]:
     # Remove common columns to avoid duplication
     common_columns = set(dealsDf.columns).intersection(boardsDf.columns) - {"DealUID"}
     boardsDf = boardsDf.drop(list(common_columns))
@@ -259,7 +268,37 @@ def expand_matches(dealsDf: pl.DataFrame, boardsDf: pl.DataFrame) -> pl.DataFram
               .join(match1, on="DealUID", how="inner")
               .join(match2, on="DealUID", how="inner"))
     
-    return compare_deal_at_both_tables(result)
+    # Calculate the expanded deals with OpenerIMPs
+    expanded_deals = compare_deal_at_both_tables(result)
+    
+    # Extract OpenerIMPs data and add it back to the original boards (keeping match_num)
+    opener_imps_data = expanded_deals.select([
+        "DealUID",
+        "OpenerIMPs_1", 
+        "OpenerIMPs_2",
+        "DeclarerIMPs_1",
+        "DeclarerIMPs_2"
+    ])
+    
+    # Add OpenerIMPs to the matches dataframe (which already has match_num)
+    updated_boards = matches.join(opener_imps_data, on="DealUID", how="left").with_columns([
+        # Assign OpenerIMPs_1 to Table 1 (match_num == 1), OpenerIMPs_2 to Table 2 (match_num == 2)
+        pl.when(pl.col("match_num") == 1)
+        .then(pl.col("OpenerIMPs_1"))
+        .when(pl.col("match_num") == 2)
+        .then(pl.col("OpenerIMPs_2"))
+        .otherwise(0)
+        .alias("OpenerIMPs")
+    ]).drop(["OpenerIMPs_1", "OpenerIMPs_2"]).with_columns([
+        pl.when(pl.col("match_num") == 1)
+        .then(pl.col("DeclarerIMPs_1"))
+        .when(pl.col("match_num") == 2)
+        .then(pl.col("DeclarerIMPs_2"))
+        .otherwise(0)
+        .alias("DeclarerIMPs")
+    ]).drop(["DeclarerIMPs_1", "DeclarerIMPs_2", "match_num"])
+    
+    return expanded_deals, updated_boards
     
 def process_auction_vectorized(dealer_col: pl.Series, auction_col: pl.Series) -> pl.DataFrame:
     """Vectorized function to process multiple auctions at once."""
@@ -512,61 +551,6 @@ def extract_derived_features(rawdf: pl.DataFrame, generateDD: bool = False) -> T
 
     return allDf, events_df, deals_df, boards_df, hands_df
 
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle, Patch
-
-def generate_2d_waterfall(data: List[List[Any]], x_label: str, y_label: str, fname: str) -> None:
-    # Dict must have three elements -- a string that is the label for each rectangle, and the x and y dimensions
-    df = pl.DataFrame(data, schema=["Label", x_label, y_label], orient="row")
-    fpath: str = f"{output_dir}/{fname}.png" if output_dir else f"{fname}.png"
-
-    # Plot
-    _, ax = plt.subplots(figsize=(8,6))
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]  # get default color cycle
-
-    prev_x, prev_y = 0.0, 0.0
-    x_max: float = 0.0
-    y_max: float = 0.0
-    i = 0
-    for row in df.iter_rows(named=True):
-        # Cast to float to keep matplotlib happy
-        curr_x = float(row[x_label])
-        curr_y = float(row[y_label])
-        x_max = max(curr_x, x_max)
-        y_max = max(curr_y, y_max)
-        color = colors[i % len(colors)]  # cycle through colors
-        i = i + 1
-
-        rect = Rectangle(
-            (0.0, 0.0),
-            curr_x,
-            curr_y,
-            alpha=0.6,
-            fc=color,
-            ec="black",
-            label=row["Label"]
-        )
-        ax.add_patch(rect)
-
-        prev_x, prev_y = curr_x, curr_y
-    ax.set_xlabel(x_label)
-    ax.set_ylabel(y_label)
-    ax.set_title(f"{y_label} vs {x_label} by Factor (Stepwise Stacked View)")
-    # Axis limits (ensure floats)
-    ax.set_xlim(0, x_max * 1.1)
-    ax.set_ylim(0, y_max * 1.1)
-    legend_patches = [
-        Patch(facecolor=colors[i % len(colors)], edgecolor="black", label=row["Label"])
-        for i, row in enumerate(df.iter_rows(named=True))
-    ]
-    ax.legend(handles=legend_patches)
-
-    # Save chart to file
-    plt.savefig(fpath, dpi=300, bbox_inches="tight")
-    plt.close()
-
 def generate_summaries(auctionsDf: pl.DataFrame) -> None:
     def _summaryRow(desc: str, df: pl.DataFrame, totHands: int) -> tuple[str, int, float, int, float]:
         return (desc, df.height, df.height / totHands, int(df["SWING"].sum()), df["SWING"].sum()/df.height if df.height > 0 else 0.0)
@@ -797,7 +781,7 @@ def add_leader_view(boardsDf: pl.DataFrame) -> pl.DataFrame:
             .alias("Lead_Type"),
             pl.col("SuitHolding").map_elements(len, return_dtype=pl.Int64).alias("Led_Suit_Len")
         )
-    df_to_csv(boardsDf.select(pl.col(LeaderView_columns)), "LeaderView")
+    # df_to_csv(boardsDf.select(pl.col(LeaderView_columns)), "LeaderView")
     return boardsDf
 
 # Create and write the OpenerView sheet
@@ -879,31 +863,31 @@ def add_opener_view(boardsDf: pl.DataFrame) -> pl.DataFrame:
     ]).drop(["_bids", "Responder", "LHO", "RHO"])
     return boardsDf
     
-def write_opener_view(full_deals_df: pl.DataFrame) -> None:
-    """Write OpenerView.csv with OpenerIMPs from full_deals_df."""
+# def write_opener_view(full_deals_df: pl.DataFrame) -> None:
+#     """Write OpenerView.csv with OpenerIMPs from full_deals_df."""
     
-    OpenerView_columns = [
-        "BoardUID", "DealNum", "Dealer", "Opener", "OpenSeat", "Opening", 
-        "OpenerShape", "OpenerPattern", "OpenerHCP", "OpenerVul", "OpenerIMPs"
-    ]
+#     OpenerView_columns = [
+#         "BoardUID", "DealNum", "Dealer", "Opener", "OpenSeat", "Opening", 
+#         "OpenerShape", "OpenerPattern", "OpenerHCP", "OpenerVul", "OpenerIMPs"
+#     ]
     
-    # Define the columns we want from each table
-    columns_to_unpivot = [
-        "BoardUID", "Opener", "OpenSeat", "Opening", 
-        "OpenerShape", "OpenerPattern", "OpenerHCP", "OpenerVul", "OpenerIMPs"
-    ]
+#     # Define the columns we want from each table
+#     columns_to_unpivot = [
+#         "BoardUID", "Opener", "OpenSeat", "Opening", 
+#         "OpenerShape", "OpenerPattern", "OpenerHCP", "OpenerVul", "OpenerIMPs"
+#     ]
     
-    # Create DataFrames for each table by renaming _1 and _2 columns
-    table1_cols = [pl.col("DealNum"), pl.col("Dealer")] + [pl.col(f"{col}_1").alias(col) for col in columns_to_unpivot]
-    table2_cols = [pl.col("DealNum"), pl.col("Dealer")] + [pl.col(f"{col}_2").alias(col) for col in columns_to_unpivot]
+#     # Create DataFrames for each table by renaming _1 and _2 columns
+#     table1_cols = [pl.col("DealNum"), pl.col("Dealer")] + [pl.col(f"{col}_1").alias(col) for col in columns_to_unpivot]
+#     table2_cols = [pl.col("DealNum"), pl.col("Dealer")] + [pl.col(f"{col}_2").alias(col) for col in columns_to_unpivot]
 
-    table1 = full_deals_df.select(table1_cols)
-    table2 = full_deals_df.select(table2_cols)
+#     table1 = full_deals_df.select(table1_cols)
+#     table2 = full_deals_df.select(table2_cols)
     
-    # Combine both tables vertically
-    opener_view_df = pl.concat([table1, table2])
+#     # Combine both tables vertically
+#     opener_view_df = pl.concat([table1, table2])
     
-    df_to_csv(opener_view_df.select(pl.col(OpenerView_columns)).sort("BoardUID"), "OpenerView")
+#     df_to_csv(opener_view_df.select(pl.col(OpenerView_columns)).sort("BoardUID"), "OpenerView")
 
 def add_declarer_view(boardsDf: pl.DataFrame) -> pl.DataFrame:
     # Create and write the DeclarerView sheet
@@ -927,7 +911,7 @@ def add_declarer_view(boardsDf: pl.DataFrame) -> pl.DataFrame:
         ).with_columns(
             (pl.col("DeclarerHCP") + pl.col("DummyHCP")).alias("TotalHCP")
         ).drop("Dummy")
-    df_to_csv(boardsDf.select(pl.col(DeclarerView_columns)), "DeclarerView")
+    # df_to_csv(boardsDf.select(pl.col(DeclarerView_columns)), "DeclarerView")
     return boardsDf
 
 def _analyze_records(processed_dealsdf: pl.DataFrame, processed_boardsdf: pl.DataFrame) -> None:
@@ -945,30 +929,33 @@ def _analyze_records(processed_dealsdf: pl.DataFrame, processed_boardsdf: pl.Dat
         raise ValueError
 
     processed_boardsdf = _reorder_columns(processed_boardsdf)
-    validBoardsDf: pl.DataFrame = processed_dealsdf.join(processed_boardsdf.drop("SourceType"), on="DealUID", how="inner")
-    validBoardsDf = validBoardsDf.filter(pl.col("AuctionCheck") == "Legal")
-    validBoardsDf = validBoardsDf.filter((pl.col("ContractValidation") != "Mismatch") & (pl.col("ContractValidation") != "Missing"))
-    validBoardsDf = validBoardsDf.filter((pl.col("DeclarerValidation") != "Mismatch") & (pl.col("DeclarerValidation") != "Missing"))
-    validBoardsDf = validBoardsDf.filter((pl.col("LeadValidation") != "Mismatch") & (pl.col("LeadValidation") != "Missing"))
-    validBoardsDf = validBoardsDf.filter((pl.col("ScoreValidation") != "Mismatch") & (pl.col("ScoreValidation") != "Missing"))
-    deal_counts: int = validBoardsDf.group_by("DealUID").count()
+    validBoards: pl.DataFrame = processed_dealsdf.join(processed_boardsdf.drop("SourceType"), on="DealUID", how="inner")
+    validBoards = validBoards.filter(pl.col("AuctionCheck") == "Legal")
+    validBoards = validBoards.filter((pl.col("ContractValidation") != "Mismatch") & (pl.col("DeclarerValidation") != "Mismatch"))
+    validBoards = validBoards.filter((pl.col("LeadValidation") != "Mismatch") & ((pl.col("LeadValidation") != "Missing") | (pl.col("Contract") == "AP")))
+    validBoards = validBoards.filter((pl.col("ScoreValidation") != "Mismatch") & (pl.col("ScoreValidation") != "Missing"))
+    deal_counts: int = validBoards.group_by("DealUID").count()
     deals_to_keep = deal_counts.filter(pl.col("count") == 2).select("DealUID")
-    validBoardsDf = validBoardsDf.join(deals_to_keep, on="DealUID", how="inner").sort(["DealUID", "TableID"])
+    validBoards = validBoards.join(deals_to_keep, on="DealUID", how="inner").sort(["DealUID", "TableID"])
     
     if "DD_W_N" in processed_dealsdf.columns: # Double-dummy analysis included
-        validBoardsDf = process_pars(validBoardsDf)
-    validBoardsDf = add_opener_view(validBoardsDf)
-    validBoardsDf = add_leader_view(validBoardsDf)
-    validBoardsDf = add_declarer_view(validBoardsDf)
-    df_to_csv(validBoardsDf, "FullBoards")
+        validBoards = process_pars(validBoards)
+    validBoards = add_opener_view(validBoards)
+    validBoards = add_leader_view(validBoards)
+    validBoards = add_declarer_view(validBoards)
     
-    validDf = expand_matches(processed_dealsdf, validBoardsDf)
-    df_to_csv(validDf, "FullDeals")
+    # Get both expanded deals and updated boards with OpenerIMPs
+    validDeals, validBoards_with_opener_imps = expand_matches(processed_dealsdf, validBoards)
     
-    generate_summaries(validDf)
-    analyze_early_bids(validDf)
-    analyze_openings(validDf)
-    write_opener_view(validDf)
+    # Update validBoards with OpenerIMPs and write both files
+    validBoards = validBoards_with_opener_imps
+    df_to_csv(validBoards, "FullBoards")
+    df_to_csv(validDeals, "FullDeals")
+    
+    generate_summaries(validDeals)
+    analyze_early_bids(validDeals)
+    analyze_openings(validDeals)
+    # write_opener_view(validDeals)
     
 def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdir: Optional[Path] = None) -> Tuple[pl.DataFrame, pl.DataFrame]:
     logging.warning("Start process_records")
