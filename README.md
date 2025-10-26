@@ -30,7 +30,7 @@ Bridge Deals Ingest processes bridge game records from multiple file formats (PB
 
 I have collected a large set of bridge deals from high-level tournament play and created a database with analytics
 using this program. The raw data files as well as the results of the processing and analytics can be found in
-https://github.com/ureshvahalia/bridge_deals_db/releases/edit/untagged-a523b3c9b8bd0632c394
+https://github.com/ureshvahalia/bridge_deals_db
 
 ## Installation
 
