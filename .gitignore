@@ -147,6 +147,7 @@ cython_debug/
 output/
 output.sort/
 DB/
+DB2/
 json_output/
 lin_output/
 pbn_output/
@@ -179,3 +180,9 @@ sav.sort/
 *.temp
 
 
+
+# Data archives
+*.tar.gz
+
+# Solver debug dumps
+dump.txt
