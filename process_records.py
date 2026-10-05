@@ -998,6 +998,7 @@ def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdi
         pl.col("DealNum").map_elements(dealNo2dealer, return_dtype=pl.Utf8).alias("dealer2"),
         pl.col("DealNum").map_elements(dealNo2vul, return_dtype=pl.Utf8).alias("vul2"),
     ])
+    print(f"rawdf len: {len(rawdf)}")
     rawdf = validate_and_combine_columns(rawdf, "Dealer", "dealer2", "DealerValidation")
     rawdf = validate_and_combine_columns(rawdf, "Vulnerability", "vul2", "VulValidation")
     rawdf = rawdf.drop(["dealer2", "vul2"])
@@ -1022,6 +1023,7 @@ def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdi
     df_to_csv(dealsdf, "deals")
     df_to_csv(boardsdf, "boards")
     df_to_csv(handsdf, "hands")
+    print(f"boards len: {len(boardsdf)}")
     
     # Validate dealer and vulnerability per deal
     processed_dealsdf = dealsdf.join(handsdf.drop(["Dealer", "Vulnerability"]), on='HandUID', how='left')

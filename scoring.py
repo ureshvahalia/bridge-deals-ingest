@@ -296,7 +296,10 @@ def process_pars(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns([
         pl.struct(dd_cols + ["Declarer", "Strain"])
         .map_elements(
-            lambda row: row[f"DD_{row['Declarer']}_{row['Strain']}"],
+            lambda row: (
+                None if not row["Declarer"] or row["Strain"] is None
+                else row[f"DD_{row['Declarer']}_{row['Strain']}"]
+            ),
             return_dtype=pl.Int8
         )
         .alias("_DDTricks")
