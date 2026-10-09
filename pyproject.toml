@@ -63,6 +63,8 @@ py-modules = [
     "common_objects",
     "fuzzy",
     "dds_wrapper",
+    "play_analysis",
+    "csv_parse",
     "pbn_parse",
     "lin_parse",
     "json_parse",

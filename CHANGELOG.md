@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- RBN play: a rank without a suit follows the suit led, not the previous card's suit.
+  Plays with a discard were corrupted from that point ("SJQH47" read as ... H4 H7, not ... H4 S7).
+- LIN results: a board's `rs|` entry is found by board number and room (two entries per board from
+  the segment's first board, `vg|` field 4), not by its position in the file. Files that skip boards
+  or record one room (most pairs events) gave boards another board's Contract, Declarer and
+  TricksMade; such boards were mostly dropped by the contract Mismatch filter, so FullBoards grows.
+- LIN claims (`mc|n|`) are read; they were never read before.
+
+### Changed
+- `Play` in boards.csv and all.csv is now one encoding for every source: cards in play order,
+  separated by `_` (e.g. `SJ_SK_S2_S4`). PBN seat-column plays are reordered using the deal.
+  RawData.csv keeps the play as parsed. Needs PlayDD installed; without it Play is left as parsed.
+
 ### Added
+- `PlayEncoding` column (boards.csv, all.csv): how Play was recorded: `order`, `pbn` (reordered from
+  PBN seat columns), `pbn_raw` (PBN without a contract to reorder by; kept as recorded), `bad`.
+- `Claim` column: declarer's claimed total from LIN `mc|n|`.
+- `--reuse-dd HANDS`: double-dummy results copied from an earlier hands.csv (file or DB folder) for
+  the same hands, dealer and vulnerability; only new hands are computed. Implies `-d`.
+- `--play`, `--playonly`: card-by-card play analysis with PlayDD, written to `<db>/play/`.
+- `--normalizeplay`, `--repairplay FILES`: fix Play in an existing DB without a re-ingest.
 - Initial package structure for PyPI distribution
 - Comprehensive documentation (README, CONTRIBUTING, INSTALLATION)
 - GitHub Actions CI/CD workflow

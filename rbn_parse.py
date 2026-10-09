@@ -93,18 +93,23 @@ def parse_play(play_str: str) -> List[str]:
     """
     parts = play_str.split(":")
     cards = []
-    current_suit: Optional[str] = None
-    
+
+    # One part per trick. A suit letter applies to the next card only; a rank
+    # without one follows the suit led ("SJQH47" = SJ SQ H4 S7).
     for part in parts:
-        for i in range(0, len(part)):
-            if part[i] in "CDHS":
-                current_suit = part[i]
-            elif part[i] in "AKQJT98765432":
-                if current_suit:
-                    cards.append(current_suit+part[i])
-                else:
+        lead_suit: Optional[str] = None
+        given_suit: Optional[str] = None
+        for ch in part:
+            if ch in "CDHS":
+                given_suit = ch
+            elif ch in "AKQJT98765432":
+                suit = given_suit or lead_suit
+                if suit is None:
                     break
-    
+                lead_suit = lead_suit or suit
+                cards.append(suit + ch)
+                given_suit = None
+
     return cards
 
 

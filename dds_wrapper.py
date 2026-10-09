@@ -5,6 +5,7 @@ import endplay.config as config
 from endplay.types import Deal, Denom, Player, Vul
 from endplay.dds import calc_all_tables, par
 import logging
+from pathlib import Path
 
 vul2dds: Dict[str, Vul] = {
     "Z": Vul.none,
@@ -19,6 +20,42 @@ player2dds: Dict[str, Player] = {
     "S": Player.south,
     "W": Player.west
 }
+
+DD_KEY = ["Hands", "Dealer", "Vulnerability"]      # par depends on dealer and vulnerability too
+DD_COLUMNS = [f"DD_{p}_{d}" for p in "WNES" for d in "NSHDC"] + ["ParScoreNS", "ParContracts"]
+
+
+def load_dd_cache(path: Path) -> pl.DataFrame:
+    """DD and par columns from an earlier hands.csv (a file, or the DB folder holding it)."""
+    path = Path(path)
+    if path.is_dir():
+        path = path / "hands.csv"
+    if not path.exists():
+        raise FileNotFoundError(f"no hands.csv to reuse DD results from: {path}")
+    cached = pl.read_csv(path, columns=DD_KEY + DD_COLUMNS, infer_schema_length=0)
+    missing = [c for c in DD_COLUMNS if c not in cached.columns]
+    if missing:
+        raise ValueError(f"{path} has no DD columns {missing}: it was built without -d")
+    cached = cached.with_columns([pl.col(c).cast(pl.Int8) for c in DD_COLUMNS[:20]] +
+                                 [pl.col("ParScoreNS").cast(pl.Int16), pl.col("ParContracts").fill_null("")])
+    logging.warning(f"Loaded DD results for {len(cached)} hands from {path}")
+    return cached.unique(DD_KEY, keep="first")
+
+
+def reuse_dd_columns(df: pl.DataFrame, cache: pl.DataFrame, batch_size: int = 32) -> pl.DataFrame:
+    """Add DD and par columns, copied from `cache` (load_dd_cache) where the same
+    hands, dealer and vulnerability were analysed before; DDS runs only for the rest.
+    Same result as create_dd_columns(df); row order is kept."""
+    joined = df.with_row_index("_row").join(cache, on=DD_KEY, how="left")
+    found = joined.filter(pl.col("DD_W_N").is_not_null())
+    todo = joined.filter(pl.col("DD_W_N").is_null()).drop(DD_COLUMNS)
+    logging.warning(f"DD results: {len(found)} reused, {len(todo)} to compute")
+    if len(todo):
+        computed = create_dd_columns(todo, batch_size).select(found.columns)
+        same_types = [pl.col(c).cast(t) for c, t in found.select(DD_COLUMNS).schema.items()]
+        found = pl.concat([found, computed.with_columns(same_types)])
+    return found.sort("_row").drop("_row")
+
 
 def create_dd_columns(df: pl.DataFrame, batch_size: int = 32) -> pl.DataFrame:
     """

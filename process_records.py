@@ -7,7 +7,8 @@ from common_objects import lineProf, dealNo2dealer, dealNo2vul
 from common_objects import rank_order, sort_holding, str_to_side
 from auction import process_auction
 from scoring import convert_to_imps, compute_contract_details_and_NSscore, compute_TricksMade, process_pars
-from dds_wrapper import create_dd_columns
+from dds_wrapper import create_dd_columns, reuse_dd_columns
+from play_analysis import create_play_analysis, normalize_play_column
 from fuzzy import fuzzy_deduplicate_events
 
 NCARDS_IN_HAND: Final[int] = 13
@@ -392,7 +393,7 @@ def process_boards(boardsdf: pl.DataFrame, dealsdf: pl.DataFrame) -> pl.DataFram
     # Validate Contract, Declarer, and Lead
     boardsdf = boardsdf.with_columns(pl.col("Play").map_elements(lambda x: "" if len(x) < 2 else x[:2], return_dtype=pl.Utf8).alias("DerivedLead"))
     boardsdf = validate_and_combine_columns(boardsdf, "Lead", "DerivedLead", "LeadValidation")
-    boardsdf = boardsdf.drop(["Play"])
+    boardsdf = boardsdf.drop(["Play", "PlayEncoding"])
     
     return boardsdf
 
@@ -516,7 +517,8 @@ def process_hands(hands: Optional[str]) -> Dict[str, str]:
             hands_dict[f'{direction[0:1]}_{key}'] = value
     return hands_dict
 
-def extract_derived_features(rawdf: pl.DataFrame, generateDD: bool = False) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+def extract_derived_features(rawdf: pl.DataFrame, generateDD: bool = False,
+                             dd_cache: Optional[pl.DataFrame] = None) -> Tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Write the collected data to CSV files using Polars for better performance."""
     # Create DataFrames for each entity type
     events_df = (
@@ -533,7 +535,8 @@ def extract_derived_features(rawdf: pl.DataFrame, generateDD: bool = False) -> T
     
     boards_df = (
         allDf.select(["BoardUID", "DealUID", "TableID", "SourceType", "North", "East", "South", "West", "Declarer", 
-                      "Contract", "TricksMade", "RawScoreNS", "Auction", "Lead", "Play", "BiddingMD", "Commentary"])
+                      "Contract", "TricksMade", "RawScoreNS", "Auction", "Lead", "Play", "PlayEncoding", "Claim",
+                      "BiddingMD", "Commentary"])
         .unique(subset=["BoardUID"], keep="first")
     )
     hands_df = (
@@ -560,7 +563,9 @@ def extract_derived_features(rawdf: pl.DataFrame, generateDD: bool = False) -> T
     hands_df = hands_df.sort("Hands")
     valid_hand_lookup = hands_df.select("HandUID")
 
-    if generateDD:
+    if dd_cache is not None:        # earlier DD results, computing only new hands
+        hands_df = reuse_dd_columns(hands_df, dd_cache)
+    elif generateDD:
         hands_df = create_dd_columns(hands_df)
     
     # Filter other DataFrames using efficient joins instead of is_in()
@@ -982,7 +987,9 @@ def _analyze_records(processed_dealsdf: pl.DataFrame, processed_boardsdf: pl.Dat
     analyze_openings(validDeals)
     # write_opener_view(validDeals)
     
-def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdir: Optional[Path] = None) -> Tuple[pl.DataFrame, pl.DataFrame]:
+def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdir: Optional[Path] = None,
+                     play_options: Optional[Dict] = None,
+                     dd_cache: Optional[pl.DataFrame] = None) -> Tuple[pl.DataFrame, pl.DataFrame]:
     logging.warning("Start process_records")
     global output_dir
     output_dir = outdir
@@ -1007,6 +1014,8 @@ def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdi
     rawdf = rawdf.with_columns(
         pl.col("Hands").map_elements(normalize_hands, return_dtype=pl.Utf8).alias("Hands")
     )
+    # One Play encoding for every source: "_"-separated play order (PBN reordered)
+    rawdf = normalize_play_column(rawdf)
     rawdf = rawdf.with_columns(
         [pl.col(c).str.to_uppercase() for c in ["North", "South", "East", "West"]]
     )
@@ -1017,7 +1026,7 @@ def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdi
     # Validate hands and derive hand-specific features
     lineProf.add_function(process_hands)
     # Separate into event, deals, and boards-specific dataframes
-    alldf, eventsdf, dealsdf, boardsdf, handsdf = extract_derived_features(rawdf, generateDD)
+    alldf, eventsdf, dealsdf, boardsdf, handsdf = extract_derived_features(rawdf, generateDD, dd_cache)
     df_to_csv(alldf, "all")
     df_to_csv(eventsdf, "events")
     df_to_csv(dealsdf, "deals")
@@ -1032,14 +1041,21 @@ def _process_records(reclist: List[BoardRecord], generateDD: bool = False, outdi
     # Now process each board
     processed_boardsdf = process_boards(boardsdf, dealsdf)
     df_to_csv(processed_boardsdf, "ProcessedBoards")
+
+    if play_options is not None and output_dir:
+        create_play_analysis(processed_boardsdf, boardsdf, dealsdf, output_dir, **play_options)
     return processed_dealsdf, processed_boardsdf
 
-def process_and_analyze_records(reclist: List[BoardRecord], generateDD: bool, outdir: Path) -> None:
-    processed_dealsdf, processed_boardsdf = _process_records(reclist, generateDD, outdir)
+def process_and_analyze_records(reclist: List[BoardRecord], generateDD: bool, outdir: Path,
+                                play_options: Optional[Dict] = None,
+                                dd_cache: Optional[pl.DataFrame] = None) -> None:
+    processed_dealsdf, processed_boardsdf = _process_records(reclist, generateDD, outdir, play_options, dd_cache)
     _analyze_records(processed_dealsdf, processed_boardsdf)
 
-def process_records(reclist: List[BoardRecord], generateDD: bool, outdir: Optional[Path] = None) -> Tuple[List[Dict], List[Dict]]:
-    processed_dealsdf, processed_boardsdf = _process_records(reclist, generateDD, outdir)
+def process_records(reclist: List[BoardRecord], generateDD: bool, outdir: Optional[Path] = None,
+                    play_options: Optional[Dict] = None,
+                    dd_cache: Optional[pl.DataFrame] = None) -> Tuple[List[Dict], List[Dict]]:
+    processed_dealsdf, processed_boardsdf = _process_records(reclist, generateDD, outdir, play_options, dd_cache)
     return (list(processed_dealsdf.iter_rows(named=True)), list(processed_boardsdf.iter_rows(named=True)))
 
 def analyze_records(outdir: Path) -> None:

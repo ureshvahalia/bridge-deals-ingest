@@ -46,6 +46,7 @@ def parse_csv_file(file_path: Path) -> List[BoardRecord]:
                     Play=row.get("Play", ""),
                     BiddingMD=row.get("BiddingMD", ""),
                     Commentary=row.get("Commentary", ""),
+                    Claim=_to_int(row.get("Claim") or ""),
                 ))
             except (ValueError, KeyError) as e:
                 logging.warning(f"Malformed CSV row in {file_path}: {e}")

@@ -34,6 +34,7 @@ class BoardRecord:
     Play: str = ""
     BiddingMD: str = ""
     Commentary: str = ""
+    Claim: Optional[int] = None     # declarer's total tricks claimed (LIN mc|n|)
 
 vulDict: Dict[str, str] = {
     'Z': 'Z', 

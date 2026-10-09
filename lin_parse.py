@@ -240,11 +240,11 @@ def _parse_board_record(lin_dict: Dict[str, List[str]], board_name: str, event: 
     if "mc" in lin_dict:
         mc_val: List[str] = lin_dict["mc"]
         if len(mc_val) > 0:
-            claim_str: str = lin_dict["mc"][0]
-            if isinstance(claim_str, int):
+            claim_str: str = str(lin_dict["mc"][0]).strip()
+            if claim_str.isdigit() and int(claim_str) <= 13:
                 claim = int(claim_str)
     if tricks is not None and claim is not None and tricks != claim:
-        print (f"claim of {claim} tricks does not match result of {tricks} tricks")
+        logging.info(f"claim of {claim} tricks does not match result of {tricks} tricks")
     elif tricks is None and claim is not None:
         tricks = claim
         
@@ -270,7 +270,8 @@ def _parse_board_record(lin_dict: Dict[str, List[str]], board_name: str, event: 
         Play="_".join(play_record),
         Lead="",
         BiddingMD="",  # TBD
-        Commentary=""  # TBD
+        Commentary="",  # TBD
+        Claim=claim,
     )
 
 def _combine_header(file) -> str:
@@ -337,6 +338,28 @@ def parse_event(input_file: Path, header: Dict[str, List[str]]) -> BridgeEvent:
     else:
         return BridgeEvent(FilePath=str(input_file))
 
+def _first_board(header: Dict[str, List[str]]) -> Optional[int]:
+    """First board of the segment, from vg|title,segment,scoring,first,last,...|"""
+    try:
+        return int(header["vg"][0].split(",")[3])
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+def _result_index(board_name: str, first_board: Optional[int], position: int) -> int:
+    """Index of a board's result in rs|...|.
+
+    rs lists two results per board (open room, closed room) from the segment's
+    first board, whichever boards the file actually contains (pairs events
+    often record only the open room). Falls back to the board's position in
+    the file when the board name or the segment's first board is unknown.
+    """
+    m = re.fullmatch(r"([oc])(\d+)", board_name.strip().lower())
+    if first_board is None or not m:
+        return position
+    return 2 * (int(m.group(2)) - first_board) + (1 if m.group(1) == "c" else 0)
+
+
 def parse_lin_file(file_path: Path) -> List[BoardRecord]:
     """
     Parse a multi-board session LIN file
@@ -368,6 +391,7 @@ def parse_lin_file(file_path: Path) -> List[BoardRecord]:
         board_single_strings = [board_string.replace("\n", "") for board_string in board_strings]
         # Maintain a mapping from deal to board records to create a single deal record per deal
         records = defaultdict(list)
+        first_board: Optional[int] = _first_board(header)
         bno: int = 0
         for board_single_string in board_single_strings:
             try:
@@ -376,8 +400,9 @@ def parse_lin_file(file_path: Path) -> List[BoardRecord]:
                 board_name: str = _parse_board_name(lin_dict)
                 deal: Optional[BridgeDeal] = _parse_deal(lin_dict, board_name)
                 if deal:
-                    board_record: Optional[BoardRecord] = _parse_board_record(lin_dict, board_name, event_obj, file_path, deal, 
-                                                                            resultList[bno] if bno < nresults else "")
+                    ri: int = _result_index(board_name, first_board, bno)
+                    board_record: Optional[BoardRecord] = _parse_board_record(lin_dict, board_name, event_obj, file_path, deal,
+                                                                            resultList[ri] if 0 <= ri < nresults else "")
                     if board_record:
                         board_records.append(board_record)
             except (ValueError, AssertionError, KeyError) as e:
