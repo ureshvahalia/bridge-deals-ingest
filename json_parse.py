@@ -24,6 +24,15 @@ def from_json_deal(deal_data: dict) -> Tuple[str, str, str, str]:
     dds: str = str(deal_data.get("DDS", "") or "")
     return (dealer, vul, hands, dds)
 
+def _claim(value: Any) -> Optional[int]:
+    """Declarer's claimed total from Play.Claim (EBL/WBF vugraph JSON), if a valid trick count."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if 0 <= n <= 13 else None
+
+
 def parse_names(players: Optional[Dict[str, Dict[str, str]]]) -> Dict[str, Dict[str, str]]:
     # Returns dictionary mapping directions to player names
     OR_names: Dict[str, str] = safe_get(players, "OR", {})
@@ -117,7 +126,9 @@ def parse_json_file(file_path: Path) -> List[BoardRecord]:
                     # Get players for this room
                     auction: Dict = room_data.get('Auction')
                     bidList: List = auction.get('Calls', []) if auction else []
-                    playStr: List[List[str]] = (room_data.get('Play') or {}).get('Tricks', [[]])
+                    play_data: Dict[str, Any] = room_data.get('Play') or {}
+                    playStr: List[List[str]] = play_data.get('Tricks', [[]])
+                    claim: Optional[int] = _claim(play_data.get('Claim'))
                     playCards: List[str] = []
                     try:
                         for trick in playStr:
@@ -154,7 +165,8 @@ def parse_json_file(file_path: Path) -> List[BoardRecord]:
                         Play="-".join(playCards),
                         Lead=lead,
                         BiddingMD="",  # TBD
-                        Commentary=""  # TBD
+                        Commentary="",  # TBD
+                        Claim=claim,
                     )
                 
                     board_records.append(board_record)

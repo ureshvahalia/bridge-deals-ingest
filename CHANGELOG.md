@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `PlayEncoding` column (boards.csv, all.csv): how Play was recorded: `order`, `pbn` (reordered from
   PBN seat columns), `pbn_raw` (PBN without a contract to reorder by; kept as recorded), `bad`.
-- `Claim` column: declarer's claimed total from LIN `mc|n|`.
+- `Claim` column: declarer's claimed total, from LIN `mc|n|` and from `Play.Claim` in EBL/WBF JSON.
+  PBN, RBN and CSV sources carry no claim.
 - `--reuse-dd HANDS`: double-dummy results copied from an earlier hands.csv (file or DB folder) for
   the same hands, dealer and vulnerability; only new hands are computed. Implies `-d`.
 - `--play`, `--playonly`: card-by-card play analysis with PlayDD, written to `<db>/play/`.

@@ -145,6 +145,22 @@ def test_lin_result_index(name, first, position, expected):
     assert _result_index(name, first, position) == expected
 
 
+def test_json_claim_is_read(tmp_path):
+    import json
+    from json_parse import parse_json_file
+
+    deal = {"Dealer": "N", "Vulnerable": "None", "N": ["KT7", "4", "AKJ8732", "A8"], "E": ["J96", "QJ932", "Q965", "7"],
+            "S": ["A8542", "AT6", "4", "KQ54"], "W": ["Q3", "K875", "T", "JT9632"]}
+    room = {"Contract": "3N", "Declarer": "S", "Tricks": 10, "Auction": {"Calls": ["1D", "P", "1S", "P", "3N", "P", "P", "P"]},
+            "Play": {"Tricks": [["CJ", "C8", "C7", "CK"]], "Claim": 10}}
+    data = {"Tournament": "T", "Event": "E", "Matches": [{"Sessions": [{"Boards": [
+        {"BoardNo": 8, "Deal": deal, "OR": room, "CR": dict(room, Play={"Tricks": [["CJ"]], "Claim": "x"})}]}]}]}
+    f = tmp_path / "t.json"
+    f.write_text(json.dumps(data))
+    records = parse_json_file(f)
+    assert [r.Claim for r in records] == [10, None]
+
+
 def test_lin_claim_is_read():
     records = parse_lin_file(Path(__file__).parent / "68917.lin")
     assert any(r.Claim is not None for r in records)
