@@ -6,7 +6,7 @@ Get up and running with Bridge Deals Ingest in 5 minutes!
 
 ```bash
 # Install from source (development)
-git clone https://github.com/yourusername/bridge-deals-ingest.git
+git clone https://github.com/ureshvahalia/bridge-deals-ingest.git
 cd bridge-deals-ingest
 pip install -e .
 ```
@@ -186,7 +186,7 @@ print(best_openings)
 ## Support
 
 For issues or questions:
-- Check existing issues: https://github.com/yourusername/bridge-deals-ingest/issues
+- Check existing issues: https://github.com/ureshvahalia/bridge-deals-ingest/issues
 - Create a new issue with details of your problem
 - Include sample data (without sensitive information) if possible
 

@@ -43,7 +43,7 @@ pip install bridge-deals-ingest
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/bridge-deals-ingest.git
+git clone https://github.com/ureshvahalia/bridge-deals-ingest.git
 cd bridge-deals-ingest
 pip install -e .
 ```
@@ -51,7 +51,7 @@ pip install -e .
 ### Development Installation
 
 ```bash
-git clone https://github.com/yourusername/bridge-deals-ingest.git
+git clone https://github.com/ureshvahalia/bridge-deals-ingest.git
 cd bridge-deals-ingest
 pip install -e ".[dev]"
 ```
@@ -243,7 +243,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Support
 
-For issues, questions, or contributions, please visit the [GitHub Issues](https://github.com/yourusername/bridge-deals-ingest/issues) page.
+For issues, questions, or contributions, please visit the [GitHub Issues](https://github.com/ureshvahalia/bridge-deals-ingest/issues) page.
 
 ## Version History
 

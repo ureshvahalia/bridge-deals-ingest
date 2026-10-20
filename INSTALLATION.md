@@ -20,7 +20,7 @@ pip install bridge-deals-ingest
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/bridge-deals-ingest.git
+   git clone https://github.com/ureshvahalia/bridge-deals-ingest.git
    cd bridge-deals-ingest
    ```
 
@@ -53,7 +53,7 @@ pip install bridge-deals-ingest
 ### Method 3: Install from GitHub directly
 
 ```bash
-pip install git+https://github.com/yourusername/bridge-deals-ingest.git
+pip install git+https://github.com/ureshvahalia/bridge-deals-ingest.git
 ```
 
 ## Verifying Installation

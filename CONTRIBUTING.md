@@ -24,7 +24,7 @@ Enhancement suggestions are welcome! Please create an issue with:
 
 1. **Fork the Repository**
    ```bash
-   git clone https://github.com/yourusername/bridge-deals-ingest.git
+   git clone https://github.com/ureshvahalia/bridge-deals-ingest.git
    cd bridge-deals-ingest
    ```
 
