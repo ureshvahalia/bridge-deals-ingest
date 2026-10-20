@@ -192,3 +192,6 @@ myenv/
 
 # Local sample LIN files (not used by tests)
 tests/t2/
+
+# Local copy of published bridge_deals_db release files
+release_v2.1/
