@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bridge-deals-ingest"
-version = "0.1.3"
+version = "0.1.4"
 description = "A comprehensive tool for ingesting, processing, and analyzing bridge game data from various formats"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT License"}
 authors = [
     {name = "Uresh Vahalia", email = "uresh@vahalia.com"}
@@ -18,7 +18,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -32,6 +31,7 @@ dependencies = [
     "numpy>=1.24.0",
     "RapidFuzz>=3.0.0",
     "line-profiler>=4.0.0",
+    "endplay>=0.5.12",
 ]
 
 [project.optional-dependencies]
@@ -71,16 +71,13 @@ py-modules = [
     "rbn_parse"
 ]
 
-[tool.setuptools.package-data]
-"*" = ["*.dll"]
-
 [tool.black]
 line-length = 120
-target-version = ['py39']
+target-version = ['py310']
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

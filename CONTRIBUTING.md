@@ -126,16 +126,18 @@ If adding support for a new file format:
 
 ```
 ingest/
-├── __init__.py          # Package initialization
-├── driver.py            # CLI entry point
+├── __init__.py         # Version number
+├── driver.py           # CLI entry point
 ├── ingest.py           # File ingestion coordinator
-├── *_parse.py          # Format-specific parsers
+├── *_parse.py          # Format-specific parsers (PBN, LIN, JSON, RBN, CSV)
 ├── process_records.py  # Core processing logic
 ├── auction.py          # Auction processing
 ├── scoring.py          # Scoring calculations
 ├── common_objects.py   # Data structures
-├── fuzzy.py           # Event deduplication
-└── dds_wrapper.py     # Double-dummy solver wrapper
+├── fuzzy.py            # Event deduplication
+├── dds_wrapper.py      # Double-dummy analysis via endplay; DD reuse
+├── play_analysis.py    # Play normalisation and play analysis via PlayDD
+└── tests/              # pytest suite
 ```
 
 ## Need Help?

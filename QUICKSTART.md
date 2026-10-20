@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get up and running with Bridge Deals Ingest in 5 minutes!
+Get up and running with Bridge Deals Ingest.
 
 ## 1. Installation
 
@@ -11,10 +11,7 @@ cd bridge-deals-ingest
 pip install -e .
 ```
 
-Or once published to PyPI:
-```bash
-pip install bridge-deals-ingest
-```
+Play analysis also needs PlayDD, which is available on request (see [INSTALLATION.md](INSTALLATION.md)).
 
 ## 2. Basic Usage
 
@@ -41,7 +38,7 @@ bridge-ingest ./output ./data/*.pbn
 bridge-ingest ./output ./data/tournaments/
 ```
 
-The tool will recursively find and process all supported files (.pbn, .lin, .json, .rbn).
+The tool will recursively find and process all supported files (.pbn, .lin, .json, .rbn, .csv).
 
 ## 3. Understanding the Output
 
@@ -53,13 +50,14 @@ After processing, you'll find these files in the output directory:
 - `FullDeals.csv` - Side-by-side comparison of both tables
 
 **Detailed Analysis:**
-- `OpenerView.csv` - Analysis from opener's perspective
-- `LeaderView.csv` - Opening lead analysis
-- `DeclarerView.csv` - Declarer play analysis
+- `FullBoards.csv` - One row per board with all derived features, including the leader's,
+  opener's and declarer's view of the board
 - `EarlyBids.csv` - Competitive bidding situations
 
-**Visualization:**
-- `Swing_Chart.png` - Visual representation of swing factors
+**Play Analysis** (with `--play`):
+- `play/` - Card-by-card double-dummy analysis of each board's play
+
+See the [README](README.md#output-files) for the full list, including the raw and processed data files.
 
 ## 4. Common Commands
 
@@ -78,6 +76,16 @@ bridge-ingest ./output ./data/tournament.pbn --processonly
 bridge-ingest ./output --analyzeonly
 ```
 
+### With card-by-card play analysis (needs PlayDD)
+```bash
+bridge-ingest ./output ./data/tournament.pbn --doubledummy --play
+```
+
+### Reuse double-dummy results from an earlier run
+```bash
+bridge-ingest ./output ./data/tournaments/ --reuse-dd ./old_output
+```
+
 ### Enable profiling
 ```bash
 bridge-ingest ./output ./data/tournament.pbn --profile
@@ -87,7 +95,8 @@ bridge-ingest ./output ./data/tournament.pbn --profile
 
 ```python
 from pathlib import Path
-from ingest import ingest_files, process_and_analyze_records
+from ingest import ingest_files
+from process_records import process_and_analyze_records
 
 # Ingest files
 files = [Path("tournament.pbn")]
@@ -148,16 +157,16 @@ print(best_openings)
 
 ## 8. Example Workflow
 
-1. **Collect Data**: Gather .pbn, .lin, .json, or .rbn files
+1. **Collect Data**: Gather .pbn, .lin, .json, .rbn, or .csv files
 2. **Process**: Run `bridge-ingest ./analysis ./data/`
 3. **Review Summary**: Open `analysis/Summary.csv`
-4. **Deep Dive**: Explore specific views (Opener, Leader, Declarer)
-5. **Visualize**: Check `Swing_Chart.png` for insights
-6. **Custom Analysis**: Load CSVs in Python/R/Excel for custom queries
+4. **Deep Dive**: Explore `FullBoards.csv` and `FullDeals.csv`
+5. **Custom Analysis**: Load CSVs in Python/R/Excel for custom queries
 
 ## 9. Tips
 
 - **Large datasets**: Use `--processonly` first, then `--analyzeonly` later
+- **Re-runs with double-dummy**: Use `--reuse-dd <earlier DB>` so only new hands are solved
 - **Performance**: Processing uses all CPU cores by default for parallel file reading
 - **Memory**: For very large datasets (>100K boards), process in batches
 - **Validation**: Check validation columns (e.g., `ContractValidation`) to assess data quality
@@ -172,7 +181,7 @@ print(best_openings)
 ## Troubleshooting
 
 **Issue**: "No supported files found"
-- **Solution**: Ensure files have correct extensions (.pbn, .lin, .json, .rbn)
+- **Solution**: Ensure files have correct extensions (.pbn, .lin, .json, .rbn, .csv)
 
 **Issue**: Command not found
 - **Solution**: Ensure package is installed and virtual environment is activated
@@ -191,9 +200,3 @@ For issues or questions:
 - Include sample data (without sensitive information) if possible
 
 Happy analyzing! 🃏
-
-
-
-
-
-

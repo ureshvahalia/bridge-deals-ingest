@@ -4,7 +4,7 @@ bridge-deals-ingest
 A comprehensive tool for ingesting, processing, and analyzing bridge game data.
 
 This package provides functionality to:
-- Ingest bridge data from multiple file formats (PBN, LIN, JSON, RBN)
+- Ingest bridge data from multiple file formats (PBN, LIN, JSON, RBN, CSV)
 - Validate and process board records
 - Analyze hands, auctions, and contracts
 - Generate statistical summaries and comparisons

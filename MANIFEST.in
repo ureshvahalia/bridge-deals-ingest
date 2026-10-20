@@ -3,9 +3,6 @@ include README.md
 include LICENSE
 include requirements.txt
 
-# Include DLL for double-dummy solver (Windows only)
-include ingest/dds.dll
-
 # Exclude generated outputs and caches
 recursive-exclude output *
 recursive-exclude output.sort *
@@ -16,7 +13,6 @@ recursive-exclude pbn_output *
 recursive-exclude rbn_output *
 recursive-exclude sav *
 recursive-exclude sav.sort *
-recursive-exclude extras *
 
 # Exclude Python cache
 recursive-exclude * __pycache__

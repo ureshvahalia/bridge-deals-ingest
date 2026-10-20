@@ -2,21 +2,13 @@
 
 ## Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher (3.11 or 3.12 recommended: endplay publishes ready-built packages for these)
 - pip (Python package installer)
 - Git (for installing from source)
 
 ## Installation Methods
 
-### Method 1: From PyPI (Recommended - when published)
-
-Once the package is published to PyPI:
-
-```bash
-pip install bridge-deals-ingest
-```
-
-### Method 2: From Source (Development)
+### Method 1: From Source
 
 1. **Clone the repository**
    ```bash
@@ -50,7 +42,7 @@ pip install bridge-deals-ingest
    pip install -e ".[dev]"
    ```
 
-### Method 3: Install from GitHub directly
+### Method 2: Install from GitHub directly
 
 ```bash
 pip install git+https://github.com/ureshvahalia/bridge-deals-ingest.git
@@ -66,21 +58,29 @@ bridge-ingest --help
 
 You should see the help message with available options.
 
-## Optional: Double-Dummy Solver Support
+## Double-Dummy Solver (endplay)
 
-The package includes optional support for double-dummy analysis using DDS (Double Dummy Solver).
+Double-dummy analysis (`-d`, `--reuse-dd`) uses DDS through the [endplay](https://pypi.org/project/endplay/)
+package, which bundles DDS for Windows, macOS and Linux. It is installed automatically as a dependency;
+nothing needs to be compiled or copied.
 
-### Windows
+## Optional: PlayDD (play normalisation and play analysis)
 
-The `dds.dll` file is included in the package. No additional setup is required.
+PlayDD does card-by-card double-dummy analysis of the play. It is used to:
 
-### macOS/Linux
+- Normalise `Play` into play order, including reordering PBN seat-column plays
+- Run play analysis (`--play`, `--playonly`)
+- Fix the play in an existing DB (`--normalizeplay`, `--repairplay`)
 
-You need to compile or obtain the DDS library for your platform:
+PlayDD is not yet publicly available; it is available on request (open an issue on this repository). It needs
+Python 3.11 or 3.12. Once you have a copy, install it into the same environment:
 
-1. Download DDS source from: https://github.com/dds-bridge/dds
-2. Follow the compilation instructions for your platform
-3. Place the compiled library in the package directory
+```bash
+pip install -e <path to PlayDD>
+```
+
+Without PlayDD, the ingest still runs, but `Play` is left as parsed, `PlayEncoding` is empty, and the play analysis
+options fail.
 
 ## Troubleshooting
 
@@ -94,10 +94,10 @@ pip install -r requirements.txt
 
 ### Permission Issues
 
-If you encounter permission issues on Windows, try:
+If you encounter permission issues on Windows, try installing into a virtual environment (step 2 above), or:
 
 ```bash
-pip install --user bridge-deals-ingest
+pip install --user -e .
 ```
 
 ### Virtual Environment Issues
@@ -113,13 +113,14 @@ python -m venv venv
 
 ### Python Version Issues
 
-Ensure you're using Python 3.9 or higher:
+Ensure you're using Python 3.10 or higher:
 
 ```bash
 python --version
 ```
 
-If you have multiple Python versions, you may need to use `python3` or `python3.9` explicitly.
+If you have multiple Python versions, you may need to use `python3` or `python3.11` explicitly. On Windows,
+`py -3.11` selects a specific version.
 
 ## Uninstalling
 
@@ -130,14 +131,6 @@ pip uninstall bridge-deals-ingest
 ```
 
 ## Updating
-
-### From PyPI
-
-```bash
-pip install --upgrade bridge-deals-ingest
-```
-
-### From Source
 
 ```bash
 cd bridge-deals-ingest
@@ -166,7 +159,3 @@ pip install -e . --upgrade
 ## Next Steps
 
 After installation, see the [README.md](README.md) for usage instructions and examples.
-
-
-
-

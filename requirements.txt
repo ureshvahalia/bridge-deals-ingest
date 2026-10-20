@@ -16,4 +16,7 @@ RapidFuzz>=3.0.0
 # Performance profiling
 line-profiler>=4.0.0
 
+# Double-dummy solver (DDS)
+endplay>=0.5.12
+
 
