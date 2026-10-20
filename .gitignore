@@ -186,3 +186,6 @@ sav.sort/
 
 # Solver debug dumps
 dump.txt
+
+# Virtual environments
+myenv/
