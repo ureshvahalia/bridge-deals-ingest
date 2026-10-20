@@ -189,3 +189,6 @@ dump.txt
 
 # Virtual environments
 myenv/
+
+# Local sample LIN files (not used by tests)
+tests/t2/
